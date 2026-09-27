@@ -1,0 +1,36 @@
+[project]
+name = "automated-picbreeder"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "camin-mccluskey", email = "mccluskey.camin@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "ipykernel>=6.29,<8",
+    "ipywidgets>=8.1,<9",
+    "jupyterlab>=4.4,<5",
+    "neat-python==2.0.0",
+    "numpy>=2.2,<3",
+    "pillow>=11,<13",
+]
+
+[project.scripts]
+automated-picbreeder = "automated_picbreeder:main"
+
+[project.optional-dependencies]
+imagenet = [
+    "torch>=2.6,<3",
+    "torchvision>=0.21,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "nbclient>=0.10,<1",
+    "pytest>=8,<10",
+]

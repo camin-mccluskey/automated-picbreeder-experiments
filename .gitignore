@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Notebook state and local experiment exports
+.ipynb_checkpoints/
+.pytest_cache/
+runs/
+.cache/
