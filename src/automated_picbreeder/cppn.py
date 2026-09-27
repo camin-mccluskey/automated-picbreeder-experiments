@@ -104,12 +104,17 @@ def render(genome, config, size=96):
     if config.output_mapping != OUTPUT_MAPPING:
         raise ValueError(f"Unsupported output_mapping: {config.output_mapping!r}.")
     network = neat.nn.FeedForwardNetwork.create(genome, config)
-    rgb = []
-    for point in coordinates(size).reshape(-1, 3):
-        h, s, b = network.activate(point)
-        rgb.append(hsv_to_rgb((h + 1.0) % 1.0, min(1.0, max(0.0, s)), min(1.0, abs(b))))
+    outputs = [network.activate(point) for point in coordinates(size).reshape(-1, 3)]
+    return hsb_to_rgb(np.asarray(outputs).reshape(size, size, 3))
+
+
+def hsb_to_rgb(outputs):
+    """Apply the shared Picbreeder mapping to raw (..., 3) network outputs."""
+    outputs = np.asarray(outputs)
+    rgb = [hsv_to_rgb((h + 1.0) % 1.0, min(1.0, max(0.0, s)), min(1.0, abs(b)))
+           for h, s, b in outputs.reshape(-1, 3)]
     # Match Picbreeder's half-up byte rounding, rather than np.rint's ties-to-even.
-    return (np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8).reshape(size, size, 3)
+    return (np.clip(rgb, 0, 1) * 255 + 0.5).astype(np.uint8).reshape(outputs.shape)
 
 
 def png_bytes(pixels):

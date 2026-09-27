@@ -194,6 +194,61 @@ uses VLMs, shared publication archives, branching and critic agents. Those mecha
 are not part of this local single-parent experiment. Class confidence is a proposed
 proxy for recognisability/human preference, not an established naturalness metric.
 
+## Interpret a saved network
+
+```sh
+uv run jupyter lab notebooks/03_cppn_interpretability.ipynb
+```
+
+Save a human selection first, or use an automated run's `session.json`. Set
+`SESSION_PATH` in notebook 03; it defaults to the genome selected at export.
+An explicit `GENOME_ID` can select another candidate. The loader checks the saved
+PNG hash and reproduces its pixels using the embedded configuration before
+inspection. It supports the current version-2 HSB format.
+
+The independent `interpretability.py` module loads networks, traces NEAT's native
+evaluator, changes individual weights/biases, disables connections, clamps node
+activations and runs independent parameter sweeps. `interpretability_notebook.py`
+supplies the graph, selected-connection activation maps, original/modified/difference
+images and widget controls. Selecting a weight shows its source activation and the
+destination's original/modified activations, with descriptive neuron labels and
+original/current weights. Neither requires a running breeding session or classifier.
+All interventions start from the original genome and operate on copies.
+
+Activation-map scales remain fixed to each node's baseline range; values beyond
+that range saturate the display, with numerical ranges shown. Node clamps replace
+post-activation values at every pixel. A zero clamp is not necessarily neutral.
+The graph distinguishes evaluated computation from unused and disabled genes.
+
+**Save experiment** writes a new directory under `runs/interpretability/`, including
+the baseline genome, configuration, source identity, exact interventions, observation
+and PNGs. `replay_experiment(directory)` recomputes and checks those images without
+requiring the original run. These records support exploratory causal tests; they
+are not UFR scores or a frozen comparison protocol. Shared influence on two regions
+alone does not establish that their structure has a shared representation.
+
+### Original Picbreeder skull
+
+```sh
+uv run jupyter lab notebooks/04_picbreeder_skull.ipynb
+```
+
+Notebook 04 loads the authors' bundled **human-evolved skull CPPN**, reproduces
+the published mouth-opening and eye-winking sweeps, then opens the same inspector
+with presets for mouth opening, eye winking, eye width and jaw width. It needs no
+ImageNet, JAX, downloading or retraining. The authors' layered representation is a
+computation-preserving conversion of the evolved graph; their SGD-trained imitation
+is a separate model. Our reference viewer uses the compact original graph, with
+verified mappings from the published parameter IDs to its original connections.
+
+`picbreeder_reference.py` preserves the reference model's activation functions,
+scaled radius and explicit bias input independently of our breeding settings.
+The tests compare baseline/intervention activations against the published layered
+weights. The standalone published PNG has a small unresolved mismatch (mean
+0.63/255, maximum 12/255 at 256×256), documented in the notebook and the
+[reference provenance](src/automated_picbreeder/reference_data/skull/README.md).
+Saved reference experiments are self-contained and replay through the common API.
+
 ## Implementation choices
 
 `cppn.cfg` explicitly declares `[CPPNRendering] output_mapping = picbreeder_hsb_v1`.

@@ -1,0 +1,480 @@
+{
+  "format": "fer_picbreeder_graph_v1",
+  "name": "Picbreeder skull",
+  "source": {
+    "repository": "https://github.com/akarshkumar0101/fer",
+    "commit": "67c270c197d8243435d6a9ad036e26c9c5e3712d",
+    "genome": "picbreeder_genomes/skull.zip",
+    "model": "evolved Picbreeder CPPN, not SGD"
+  },
+  "nodes": [
+    {
+      "id": "576_30",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_64",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_201",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_223",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_238",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_281",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_298",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_321",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "576_360",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "534_0",
+      "label": "bias",
+      "activation": "identity"
+    },
+    {
+      "id": "534_1",
+      "label": "d",
+      "activation": "identity"
+    },
+    {
+      "id": "534_2",
+      "label": "x",
+      "activation": "identity"
+    },
+    {
+      "id": "534_3",
+      "label": "y",
+      "activation": "identity"
+    },
+    {
+      "id": "534_4",
+      "label": "brightness",
+      "activation": "gaussian"
+    },
+    {
+      "id": "534_5",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "534_32",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "540_106",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "540_156",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "541_67",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "542_44",
+      "label": "",
+      "activation": "sin"
+    },
+    {
+      "id": "542_96",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "542_103",
+      "label": "",
+      "activation": "gaussian"
+    },
+    {
+      "id": "542_136",
+      "label": "",
+      "activation": "sin"
+    },
+    {
+      "id": "1000000",
+      "label": "hue",
+      "activation": "identity"
+    },
+    {
+      "id": "1000001",
+      "label": "saturation",
+      "activation": "identity"
+    }
+  ],
+  "links": [
+    {
+      "source": "542_103",
+      "target": "576_30",
+      "weight": -0.4450539653659765
+    },
+    {
+      "source": "576_30",
+      "target": "540_106",
+      "weight": 0.7491848415195232
+    },
+    {
+      "source": "540_106",
+      "target": "534_5",
+      "weight": -1.6228716924121847
+    },
+    {
+      "source": "540_156",
+      "target": "576_64",
+      "weight": -0.3173481794226165
+    },
+    {
+      "source": "576_64",
+      "target": "540_106",
+      "weight": 1.4906547454295054
+    },
+    {
+      "source": "540_106",
+      "target": "534_4",
+      "weight": 0.2745979798753708
+    },
+    {
+      "source": "542_103",
+      "target": "542_44",
+      "weight": -0.25924680724610183
+    },
+    {
+      "source": "542_96",
+      "target": "534_5",
+      "weight": -0.8522176397590367
+    },
+    {
+      "source": "541_67",
+      "target": "542_103",
+      "weight": 0.47531739639476633
+    },
+    {
+      "source": "541_67",
+      "target": "576_201",
+      "weight": -1.0341815267194334
+    },
+    {
+      "source": "576_201",
+      "target": "534_32",
+      "weight": -1.319531079315555
+    },
+    {
+      "source": "540_106",
+      "target": "576_223",
+      "weight": 2.1046613275019848
+    },
+    {
+      "source": "576_223",
+      "target": "534_32",
+      "weight": -1.1641215853899358
+    },
+    {
+      "source": "534_3",
+      "target": "576_238",
+      "weight": -2.261658087441334
+    },
+    {
+      "source": "576_238",
+      "target": "541_67",
+      "weight": 0.29633764633153215
+    },
+    {
+      "source": "534_3",
+      "target": "576_30",
+      "weight": 0.42425888901734243
+    },
+    {
+      "source": "542_103",
+      "target": "534_32",
+      "weight": -1.344298698285892
+    },
+    {
+      "source": "576_30",
+      "target": "576_281",
+      "weight": 1.636583472800109
+    },
+    {
+      "source": "576_281",
+      "target": "540_106",
+      "weight": -0.09854233930213208
+    },
+    {
+      "source": "542_103",
+      "target": "576_298",
+      "weight": 1.0200984857720672
+    },
+    {
+      "source": "576_298",
+      "target": "534_32",
+      "weight": -1.7487136253008708
+    },
+    {
+      "source": "534_0",
+      "target": "576_321",
+      "weight": 1.2497459339294916
+    },
+    {
+      "source": "576_321",
+      "target": "534_32",
+      "weight": 0.316887078352996
+    },
+    {
+      "source": "541_67",
+      "target": "576_360",
+      "weight": -2.242269171493547
+    },
+    {
+      "source": "576_360",
+      "target": "534_32",
+      "weight": -0.8102427180770357
+    },
+    {
+      "source": "541_67",
+      "target": "576_281",
+      "weight": 0.9453575810912882
+    },
+    {
+      "source": "542_44",
+      "target": "576_30",
+      "weight": 0.7915699340057758
+    },
+    {
+      "source": "576_281",
+      "target": "576_321",
+      "weight": 2.753002161446246
+    },
+    {
+      "source": "534_1",
+      "target": "576_281",
+      "weight": -1.6859600613138819
+    },
+    {
+      "source": "534_1",
+      "target": "576_321",
+      "weight": -2.864702482305879
+    },
+    {
+      "source": "534_0",
+      "target": "534_5",
+      "weight": -1.6413524971439237
+    },
+    {
+      "source": "534_1",
+      "target": "534_5",
+      "weight": -1.9593153372825693
+    },
+    {
+      "source": "534_2",
+      "target": "534_5",
+      "weight": 0.3302046740351158
+    },
+    {
+      "source": "534_3",
+      "target": "534_5",
+      "weight": 2.0435993166967195
+    },
+    {
+      "source": "534_5",
+      "target": "534_4",
+      "weight": -0.8084863515132545
+    },
+    {
+      "source": "534_1",
+      "target": "534_32",
+      "weight": -0.17528168747162653
+    },
+    {
+      "source": "534_32",
+      "target": "534_5",
+      "weight": -0.9507597501662584
+    },
+    {
+      "source": "534_1",
+      "target": "540_106",
+      "weight": -1.1808558558631952
+    },
+    {
+      "source": "540_106",
+      "target": "534_32",
+      "weight": 2.840840043845216
+    },
+    {
+      "source": "534_1",
+      "target": "534_4",
+      "weight": 0.04727504223001344
+    },
+    {
+      "source": "534_1",
+      "target": "540_156",
+      "weight": -0.12768478388762555
+    },
+    {
+      "source": "540_156",
+      "target": "540_106",
+      "weight": -3.0
+    },
+    {
+      "source": "534_3",
+      "target": "540_106",
+      "weight": -0.7821283492256342
+    },
+    {
+      "source": "534_3",
+      "target": "534_32",
+      "weight": 2.103069243604625
+    },
+    {
+      "source": "534_3",
+      "target": "541_67",
+      "weight": 2.866673989731464
+    },
+    {
+      "source": "541_67",
+      "target": "534_32",
+      "weight": -0.33657381690053545
+    },
+    {
+      "source": "541_67",
+      "target": "540_156",
+      "weight": 0.5344723222961489
+    },
+    {
+      "source": "534_2",
+      "target": "534_32",
+      "weight": 0.3566547919236649
+    },
+    {
+      "source": "534_1",
+      "target": "542_44",
+      "weight": 2.9884688684613963
+    },
+    {
+      "source": "542_44",
+      "target": "540_106",
+      "weight": 1.9378633366706794
+    },
+    {
+      "source": "534_0",
+      "target": "534_32",
+      "weight": 0.5180761361354571
+    },
+    {
+      "source": "534_1",
+      "target": "542_96",
+      "weight": 1.726418671601825
+    },
+    {
+      "source": "542_96",
+      "target": "540_106",
+      "weight": 0.0018668364788525516
+    },
+    {
+      "source": "542_96",
+      "target": "542_103",
+      "weight": 0.029277431708193302
+    },
+    {
+      "source": "542_103",
+      "target": "540_106",
+      "weight": 1.1071927890407922
+    },
+    {
+      "source": "542_96",
+      "target": "542_136",
+      "weight": 0.030178331446069517
+    },
+    {
+      "source": "542_136",
+      "target": "540_106",
+      "weight": -3.0
+    },
+    {
+      "source": "534_4",
+      "target": "1000000",
+      "weight": 0.0
+    },
+    {
+      "source": "534_4",
+      "target": "1000001",
+      "weight": 0.0
+    }
+  ],
+  "presets": {
+    "Jaw width": {
+      "parameter_id": 37,
+      "source": "534_3",
+      "target": "576_238",
+      "layer": 0,
+      "row": 1,
+      "column": 15,
+      "weight": -2.261658191680908
+    },
+    "Mouth opening": {
+      "parameter_id": 4371,
+      "source": "540_106",
+      "target": "576_223",
+      "layer": 7,
+      "row": 15,
+      "column": 15,
+      "weight": 2.104661226272583
+    },
+    "Eye winking": {
+      "parameter_id": 5009,
+      "source": "534_2",
+      "target": "534_5",
+      "layer": 9,
+      "row": 0,
+      "column": 15,
+      "weight": 0.33020466566085815
+    },
+    "Eye width": {
+      "parameter_id": 5097,
+      "source": "542_96",
+      "target": "534_5",
+      "layer": 9,
+      "row": 4,
+      "column": 15,
+      "weight": -0.8522176146507263
+    }
+  },
+  "source_sha256": {
+    "skull.zip": "63adfccc384d6fb48c79719c9336483c478839e1fc4773f289d3aee9fefaabb2",
+    "params.pkl": "6a1418521e673735d57d2c1086ab3eda1bab54179b1945feed6035fd9d9c9ea5",
+    "process_pb.py": "ea0e577390d3ee86173be963b1c80fff90e5c26dc71125973e25699d4e9a5b38",
+    "cppn.py": "7bfc0b3a0b15b9c265a090d8dd53b941d2424d8d45874807c94adc084a348b7c",
+    "fer.ipynb": "71c0238079a95986a7b2be2c5a682c5e820c841a29e95dab834b020e31f96ae0",
+    "img.png": "996b4532a9a21554930047a1e0776412d45f182be11fc10589e3ee4548d40f3c"
+  }
+}
