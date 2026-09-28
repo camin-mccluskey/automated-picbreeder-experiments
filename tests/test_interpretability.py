@@ -83,12 +83,12 @@ def test_sweeps_are_absolute_independent_and_preserve_baseline(simple_network):
     assert genome_to_dict(network.genome) == original
 
 
-@pytest.mark.parametrize("selector", [None, "MaximumClassConfidence"])
-def test_load_shared_session_selection_explicit_id_and_checkpoint(tmp_path, selector):
+@pytest.mark.parametrize("selection_strategy", [None, {"selection_strategy": "imagenet"}])
+def test_load_shared_session_selection_explicit_id_and_checkpoint(tmp_path, selection_strategy):
     session = BreedingSession(7)
     session.select(2)
     session.evolve()
-    writer = SessionWriter(tmp_path / "run", size=8, selector=selector)
+    writer = SessionWriter(tmp_path / "run", size=8, selection_strategy=selection_strategy)
     writer.save(session, checkpoint=1)
     loaded = load_network(writer.directory)
     assert loaded.genome.key == session.selected_id
@@ -107,6 +107,27 @@ def test_load_shared_session_selection_explicit_id_and_checkpoint(tmp_path, sele
     with pytest.raises(ValueError, match="No saved selection"):
         load_network(writer.directory)
     load_network(writer.directory, session.candidates[0])
+
+
+def test_load_session_from_before_selection_strategy_records(tmp_path):
+    session = BreedingSession(7)
+    session.select(2)
+    writer = SessionWriter(tmp_path / "run", size=8)
+    writer.save(session, checkpoint=0)
+    # Recreate the earlier version-2 record shape, without migrating it on read.
+    paths = [writer.directory / "session.json", writer.directory / "checkpoints/000000.json"]
+    for path in paths:
+        data = json.loads(path.read_text())
+        data["metadata"].pop("selection_strategy")
+        data["metadata"]["selector"] = {"selector": "maximum_class_confidence"}
+        for event in data["events"]:
+            event.pop("decision", None)
+        path.write_text(json.dumps(data))
+        original = path.read_bytes()
+        loaded = load_network(path)
+        assert loaded.genome.key == 2
+        np.testing.assert_array_equal(trace_network(loaded).rgb, render(session.genomes[2], session.config, 8))
+        assert path.read_bytes() == original
 
 
 def test_loader_rejects_image_drift_and_unsupported_mapping(tmp_path):

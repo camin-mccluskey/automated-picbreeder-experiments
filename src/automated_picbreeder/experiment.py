@@ -1,17 +1,18 @@
-"""Run and record automated choices in the shared nine-image breeding loop."""
+"""Run a selection strategy in the shared nine-image breeding loop."""
 
 from dataclasses import asdict, dataclass
+from hashlib import sha256
 from pathlib import Path
+from random import Random
 import time
 
 import numpy as np
-from PIL import Image, ImageDraw
 
 from .breeding import BreedingSession
 from .cppn import png_bytes, render
-from .evaluation import ImageEvaluator
-from .selection import Selector
+from .experiment_reporting import contact_sheet, progress_message
 from .persistence import SessionWriter
+from .selection_strategies import SelectionStrategy
 
 
 @dataclass(frozen=True)
@@ -22,8 +23,15 @@ class ExperimentSettings:
     mutation_strength: float = 0.2
     topology: bool = True
     checkpoint_every: int = 10
+    selection_seed: int | None = None
 
     def __post_init__(self):
+        for name in ("seed", "selection_seed"):
+            value = getattr(self, name)
+            if name == "selection_seed" and value is None:
+                continue
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ValueError(f"{name} must be an integer.")
         for name in ("steps", "size", "checkpoint_every"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -33,75 +41,65 @@ class ExperimentSettings:
         if not np.isfinite(self.mutation_strength) or self.mutation_strength < 0:
             raise ValueError("mutation_strength must be finite and non-negative.")
 
-
-def _contact_sheet(images, candidate_ids, selected_position, evaluation):
-    """An inspection view; scoring always uses the original image arrays."""
-    sheet = Image.new("RGB", (660, 3 * 222), "white")
-    draw = ImageDraw.Draw(sheet)
-    for i, (pixels, key) in enumerate(zip(images, candidate_ids)):
-        x, y = (i % 3) * 220, (i // 3) * 222
-        sheet.paste(Image.fromarray(pixels).convert("RGB").resize((160, 160)), (x + 8, y + 8))
-        column = int(evaluation.values[i].argmax())
-        label = evaluation.names[column]
-        draw.text((x + 8, y + 173), f"{i + 1}. genome #{key}" + (" SELECTED" if i == selected_position else ""), fill="black")
-        draw.text((x + 8, y + 189), f"{label[:27]} [{column}]", fill="black")
-        draw.text((x + 8, y + 203), f"max score: {evaluation.values[i, column]:.6f}", fill="black")
-        if i == selected_position:
-            draw.rectangle((x + 2, y + 2, x + 216, y + 219), outline="#267744", width=3)
-    return sheet
+    @property
+    def resolved_selection_seed(self) -> int:
+        """A stable, separate seed; never use Python's process-dependent hash()."""
+        if self.selection_seed is not None:
+            return self.selection_seed
+        digest = sha256(f"automated-picbreeder:selection:{self.seed}".encode()).digest()
+        return int.from_bytes(digest[:8], "big")
 
 
 def run_experiment(
-    evaluator: ImageEvaluator, selector: Selector, output_dir: str | Path,
-    settings: ExperimentSettings = ExperimentSettings(), *, progress=print,
+    *, selection_strategy: SelectionStrategy, output_dir: str | Path,
+    settings: ExperimentSettings = ExperimentSettings(), progress=print,
 ) -> dict:
-    """Evaluate nine candidates, select one, breed eight children, repeat.
+    """Choose from nine images, breed eight children, and record every decision.
 
-    A step includes one decision, starting with the initial nine roots. Every
-    displayed image is rescored, including the parent: 9 evaluations per step,
-    and 9 + 8*(steps-1) distinct candidate genomes. This deliberately avoids a
-    stationary-score cache so other evaluators can score the current choice set.
+    The initial grid counts as one decision. S decisions present 9*S candidates
+    and generate 9+8*(S-1) genomes. Evaluation is owned by the selection strategy:
+    random selection evaluates none, while ImageNet evaluates all nine each turn.
+    A fresh selection RNG is created per run, independent of breeding's RNG.
     """
-    writer = SessionWriter(output_dir, size=settings.size, selector=selector.describe(),
-                           settings=asdict(settings))
+    run_settings = asdict(settings) | {"selection_seed": settings.resolved_selection_seed}
+    writer = SessionWriter(output_dir, size=settings.size,
+                           selection_strategy=selection_strategy.describe(), settings=run_settings)
     directory = writer.directory
     (directory / "grids").mkdir()
     session = BreedingSession(seed=settings.seed)
+    selection_rng = Random(settings.resolved_selection_seed)
     names = None
     start = time.perf_counter()
-    decisions = 0
+    evaluated_images = candidate_presentations = 0
     for step in range(settings.steps):
         if step:
             session.evolve(strength=settings.mutation_strength, topology=settings.topology)
         ids = session.candidates.copy()
         images = [render(session.genomes[key], session.config, settings.size) for key in ids]
-        # Preserve the current choice set even if evaluation or selection fails.
+        # Preserve the current grid even if the selection strategy fails.
         writer.save(session, images={key: png_bytes(pixels) for key, pixels in zip(ids, images)})
-        evaluation = evaluator.evaluate(images)
-        if evaluation.values.shape[0] != 9:
-            raise ValueError("The evaluator must return exactly one row per displayed candidate.")
-        if names is None:
-            names = evaluation.names
-        elif names != evaluation.names:
-            raise ValueError("Evaluator column names/order changed during the run.")
-        position = selector.select(evaluation)
-        session.select(position, evaluation=evaluation)
-        best_classes = evaluation.values.argmax(axis=1)
-        decisions += 1
+        decision = selection_strategy.choose(images, rng=selection_rng)
+        decision.validate(len(ids))
+        if decision.evaluation is not None:
+            if names is None:
+                names = decision.evaluation.names
+            elif names != decision.evaluation.names:
+                raise ValueError("Evaluator column names/order changed during the run.")
+            evaluated_images += len(ids)
+        session.select(decision.position, decision=decision)
+        candidate_presentations += len(ids)
+        decisions = step + 1
         summary = {
             "status": "complete" if decisions == settings.steps else "running",
-            "decisions": decisions, "evaluated_images": decisions * 9,
-            "unique_candidates": len(session.genomes), "selected_id": session.selected_id,
-            "selected_class_index": int(best_classes[position]),
-            "selected_class_name": names[int(best_classes[position])],
-            "selected_score": float(evaluation.values[position].max()),
+            "decisions": decisions, "candidate_presentations": candidate_presentations,
+            "evaluated_images": evaluated_images, "unique_candidates": len(session.genomes),
+            "selected_id": session.selected_id, "selection_mode": decision.mode,
+            "selected_score": None if decision.scores is None else float(decision.scores[decision.position]),
             "elapsed_seconds": time.perf_counter() - start,
         }
-        _contact_sheet(images, ids, position, evaluation).save(directory / "grids" / f"{step:06d}.png")
+        contact_sheet(images, ids, decision).save(directory / "grids" / f"{step:06d}.png")
         checkpoint = step if decisions % settings.checkpoint_every == 0 or decisions == settings.steps else None
         writer.save(session, summary=summary, checkpoint=checkpoint)
         if progress is not None:
-            progress(f"Step {decisions}/{settings.steps}: selected #{session.selected_id}, "
-                     f"{summary['selected_class_name']} "
-                     f"{summary['selected_score']:.6f}; {9 * decisions} image evaluations")
+            progress(progress_message(summary, settings.steps))
     return summary

@@ -115,7 +115,7 @@ class CPPNPlayground(BreedingSession):
         """Export the shared session format and every generated image."""
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-%fZ")
         directory = self.save_dir / f"cppn-{stamp}"
-        writer = SessionWriter(directory, size=self.size, selector={"name": "human"})
+        writer = SessionWriter(directory, size=self.size, selection_strategy={"selection_strategy": "human"})
         writer.save(self, images=self.images)
         self.message.value = f"Saved: <code>{escape(str(directory.resolve()))}</code>"
         return directory

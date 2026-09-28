@@ -2,12 +2,20 @@
 
 ## Objective and hypothesis
 
+The current-image selection experiments in [THOUGHTS.md](../THOUGHTS.md) now also
+have pixel-novelty and novelty-plus-predictability strategies, with a comparison
+workflow described in the [README](../README.md#run-the-experiment-1-comparison).
+They use the same breeding loop. Their online masked-image observers are separate
+from the CPPNs being evolved; observer learning and pixel diversity are not UFR
+evidence. Future-offspring prediction remains a separate, unimplemented experiment.
+The classifier-based representation study below retains its original objective.
+
 Test whether classifier-guided selection in a Picbreeder-style breeding loop can produce compositional pattern-producing networks (CPPNs) with evidence of **unified factored representations (UFR)**, as described by Kumar et al. [1].
 
 - **Factored:** meaningful image properties can be varied independently, with limited unintended changes.
 - **Unified:** repeated structure depends on shared computation rather than separate implementations of the same structure.
 
-The hypothesis is that automated selection can produce these properties without human selection during evolution. This is a sufficiency claim about the complete system: CPPN representation, evolutionary operators and classifier-guided selection. The current experiment replaces the choice in our human notebook with maximum ImageNet class confidence. It uses the same local breeding loop; it is not a claim that the classifier reproduces human preferences.
+The hypothesis is that automated selection can produce these properties without human selection during evolution. This is a sufficiency claim about the complete system: CPPN representation, evolutionary operators and selection strategy. The initial classifier-guided condition replaces the choice in our human notebook with maximum ImageNet class confidence. The implementation also supports uniform random selection and ImageNet selection with occasional random exploration. These are available experimental conditions, not comparison results or a frozen protocol. All use the same local breeding loop; this is not a claim that the classifier reproduces human preferences.
 
 **Method decision (2026-09-27):** replace the originally proposed Innovation Engines MAP-Elites archive [2] with the single-parent choice loop below. This is closer to the local interaction loop in Earle et al. [3], but does not implement their shared publication archive, critic agents, or full Picbreeder interaction system. MAP-Elites remains a possible later comparison.
 
@@ -17,7 +25,7 @@ A positive result would not establish that the automated and human selection mec
 
 ### 1. Build the evolution system
 
-Implement the same candidate-generation and selection opportunities as our human notebook:
+The implemented runner uses the same candidate-generation and selection opportunities as our human notebook. Its greedy ImageNet condition is:
 
 1. Encode images with CPPNs whose weights and topology can evolve.
 2. Evaluate images with one frozen ImageNet-trained convolutional neural network.
@@ -25,26 +33,28 @@ Implement the same candidate-generation and selection opportunities as our human
 4. Score each candidate by its highest class confidence, regardless of class. Select the highest-scoring candidate; exact ties select the first displayed candidate.
 5. Retain the selected parent unchanged in position 1, generate eight independent mutated offspring, and repeat selection from these nine images. Classes can change between decisions; no class-specific archive is maintained.
 
-Use the same shared breeding implementation for the notebook and automated runner, with matched initialization, rendering and mutation settings. The runner makes selection decisions only: it does not exercise the notebook's optional backtracking or reset controls. Keeping the parent means exact score ties retain it, and a fixed deterministic scoring function cannot select a lower-scoring image. A finite sequence of selections is one run; its length includes the initial random-grid choice.
+`RandomSelectionStrategy()` instead selects uniformly from all nine candidates without inference. `ImageNetSelectionStrategy(epsilon=p)` evaluates and scores the same way as the greedy condition, then chooses uniformly with probability p and greedily otherwise. Random draws include the retained parent and may coincide with the greedy choice. Epsilon 0 is greedy; epsilon 1 is always random with ImageNet measurements still recorded. Selection strategies own evaluation, scoring and choice behind one `choose(images, *, rng)` interface. The runner has no separate evaluator or scorer arguments. See the [README](../README.md#automated-selection-experiments) for Python and CLI instructions.
 
-Selection uses class confidence as a candidate proxy for recognisability/human preference, not a validated measure of naturalness or interestingness. Use a classifier rather than a vision-language model (VLM). No image-reconstruction objective is required.
+Use the same shared breeding implementation for the notebook and automated runner, with matched initialization, rendering and mutation settings. The runner makes selection decisions only: it does not exercise the notebook's optional backtracking or reset controls. In the greedy condition, exact score ties retain the parent, and a fixed deterministic scoring function cannot select a lower-scoring image. Exploratory choices can. A finite sequence of selections is one run; its length includes the initial random-grid choice. The runner uses a separate, recorded selection RNG seed so exploration draws do not alter mutation draws.
+
+ImageNet selection uses class confidence as a candidate proxy for recognisability/human preference, not a validated measure of naturalness or interestingness. The random condition has no such preference. These implemented conditions do not use a vision-language model (VLM) or an image-reconstruction objective.
 
 Both human and automated experiments now use three mutable CPPN outputs ordered hue, saturation and brightness (HSB/HSV), converted by the shared renderer to RGB using Picbreeder-VLM’s mapping: hue wraps modulo one, saturation clips to [0, 1], and brightness takes its absolute value then clips to [0, 1]. RGB bytes use half-up rounding. Coordinates, mutation rates, mutation strength and the parent-plus-eight-offspring loop are unchanged. This adopts HSB colour semantics without Picbreeder-VLM’s custom reproduction or colour/brightness subnetworks. Earlier experimental rendering conventions are not supported. Activation-function definitions remain those of our NEAT-Python configuration, without Picbreeder-VLM’s extra output transforms.
 
 Reuse existing code where practical. Earle et al. provide a recent Picbreeder implementation [3, §3.1]. Pin the code version, classifier checkpoint, preprocessing, rendering and mutation configuration. Document deviations from the original Innovation Engine rather than describing an adapted implementation as an exact replication.
 
-Save every candidate genome, parent ID, classifier-score vector, ordered choice set and selected position, including rejected alternatives and repeated parent selections. Save decision checkpoints and sufficient configuration and source code to reproduce images and runs. Record both image evaluations and unique candidate genomes: with S selection decisions, scoring the full grid each time costs 9S evaluations and generates 9 + 8(S - 1) genomes. Human and automated runs use the same `session.json` schema and shared persistence code, including PNGs of every generated candidate. Selection events contain optional evaluation values, names and metadata; human selections record null evaluations. Current checkpoints use this same session schema and are audit snapshots, not resumable sessions.
+Save every candidate genome, parent ID, available classifier-score vector, ordered choice set and selected position, including rejected alternatives and repeated parent selections. Save decision checkpoints and sufficient configuration and source code to reproduce images and runs. With S decisions, every condition presents 9S candidates and generates 9 + 8(S - 1) genomes. ImageNet conditions perform 9S image evaluations, including exploratory turns; pure random selection performs none. Human and automated runs use the same version-2 `session.json` format and shared persistence code, including PNGs of every generated candidate. Selection events contain optional evaluation values, names and metadata, plus decision mode and preference scores. Human choices have null evaluation and decision; the pure random selection strategy has null evaluation and scores. Current checkpoints are audit snapshots, not resumable sessions. Existing version-2 HSB sessions remain readable without rewriting them.
 
 ### 2. Pilot and freeze the protocol
 
 Use a small pilot to establish computational cost and develop the representation assessment. Before the main runs, fix:
 
-- Number of independent seeds and image-evaluation budget per run.
+- Selection strategies and epsilon values to compare, number of independent seeds, and decision budget per run; record image-evaluation cost separately.
 - Checkpoint intervals.
 - Checkpoints and sampling rule for selecting networks for assessment across independent runs.
 - Intervention ranges, annotation instructions, thresholds and analysis procedure.
 
-These numerical choices remain unresolved. Count search budget in evaluated images, not generations. Separate pilot findings from the main evaluation.
+These numerical choices remain unresolved. Match candidate-selection opportunities using decision budgets (or equivalently candidate presentations for this fixed nine-image loop). Report image evaluations and computational cost separately: pure random selection cannot be compared using a positive classifier-evaluation budget. Equal seeds do not yield matched candidate sets after different choices. Separate pilot findings from the main evaluation.
 
 ### 3. Assess evolved networks directly
 
@@ -66,7 +76,7 @@ Established disentanglement criteria provide guidance [4, §2; 5, §4 and Append
 
 At fixed checkpoints, assess recognisability, visual diversity and novelty relative to earlier outputs using a fixed sampling and rating protocol. This addresses whether meaningful variation continues or stagnates within the allotted budget.
 
-Log changes in the selected image's highest-scoring class and inspect lineages. This differs from the Innovation Engine's archive-based operational definition of goal switching [2, §5.2]. A changed top class is a classifier-label transition, not evidence of autonomous invention of a new objective.
+For ImageNet conditions, log changes in the selected image's highest-scoring class and inspect lineages. Pure random runs have no classifier measurements unless evaluated separately after the run. This differs from the Innovation Engine's archive-based operational definition of goal switching [2, §5.2]. A changed top class is a classifier-label transition, not evidence of autonomous invention of a new objective.
 
 Classifier confidence, class-label changes and visually different noise are insufficient evidence of creativity or sustained meaningful novelty.
 
@@ -82,7 +92,7 @@ Compare human decisions with the maximum-class-confidence choice rule applied to
 
 The desired positive finding is reproducible evidence of both selective semantic control and shared computation in automatically evolved networks. Report their occurrence across assessed networks and independent runs, including failures and uncertainty.
 
-A negative finding means the tested configuration and budget did not demonstrate these properties. This initial study does not isolate which system component causes them; selection and search ablations would be subsequent work.
+A negative finding means the tested configuration and budget did not demonstrate these properties. Controlled comparisons between these selection strategies can test the contribution of selection under the shared representation and mutation settings. Their availability alone does not establish that contribution; those comparisons and the representation assessment have not yet been completed.
 
 Deliver reproducible code, frozen configuration, complete logs, assessment materials and a short report. Position the contribution as representation analysis of classifier-guided CPPN evolution. Acknowledge existing automated-creativity results [2] and the recent VLM replication’s preliminary representation analysis [3, Appendix B.1].
 

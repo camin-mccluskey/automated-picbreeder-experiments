@@ -39,18 +39,27 @@ class BreedingSession:
         self.round = 0
         self.events.append({"action": "reset", "displayed": self.candidates.copy()})
 
-    def select(self, position, *, evaluation=None):
-        if not isinstance(position, int) or not 0 <= position < len(self.candidates):
+    def select(self, position, *, decision=None):
+        """Record a human choice, or a selection strategy's complete decision."""
+        if isinstance(position, bool) or not isinstance(position, int) or not 0 <= position < len(self.candidates):
             raise ValueError("Selection position is outside the displayed grid.")
-        if evaluation is not None and evaluation.values.shape[0] != len(self.candidates):
-            raise ValueError("Evaluation must contain one row per displayed candidate.")
-        scores = None if evaluation is None else {
+        if decision is not None:
+            decision.validate(len(self.candidates))
+            if decision.position != position:
+                raise ValueError("Decision position does not match the selected position.")
+        evaluation = None if decision is None else decision.evaluation
+        measurements = None if evaluation is None else {
             "values": evaluation.values.tolist(), "names": list(evaluation.names),
             "metadata": deepcopy(evaluation.metadata),
         }
+        selection = None if decision is None else {
+            "mode": decision.mode,
+            "scores": None if decision.scores is None else decision.scores.tolist(),
+        }
         self.selected_id = self.candidates[position]
         self.events.append({"action": "select", "position": position, "genome": self.selected_id,
-                            "displayed": self.candidates.copy(), "evaluation": scores})
+                            "displayed": self.candidates.copy(), "evaluation": measurements,
+                            "decision": selection})
 
     @property
     def selected_genome(self):

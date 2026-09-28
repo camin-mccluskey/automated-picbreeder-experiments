@@ -35,14 +35,14 @@ def _source_snapshot(directory):
 
 
 class SessionWriter:
-    """Own a new run directory; save the same version-2 schema for any selector.
+    """Own a new run directory; save version-2 sessions for any selection strategy.
 
     Image paths in session and checkpoint documents are relative to the run
     directory. Snapshots are audit records, not resumable RNG/innovation state.
     Genomes are immutable after registration, so their PNGs are written once.
     """
 
-    def __init__(self, directory, *, size, selector=None, settings=None):
+    def __init__(self, directory, *, size, selection_strategy=None, settings=None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=False)
         (self.directory / "images").mkdir()
@@ -50,7 +50,7 @@ class SessionWriter:
         self.image_records = {}
         self.metadata = {
             "export_started_at": datetime.now(timezone.utc).isoformat(),
-            "selector": selector, "settings": settings,
+            "selection_strategy": selection_strategy, "settings": settings,
             "python": platform.python_version(), "platform": platform.platform(),
             "source_sha256": _source_snapshot(self.directory),
             "checkpoint_scope": "audit snapshots, not resumable sessions",

@@ -16,7 +16,7 @@ class Evaluation:
 
     Values are finite real numbers, not necessarily probabilities. Column index
     is the identifier; display names may repeat (as ImageNet labels do).
-    Selection policies decide how to use the columns, including which direction
+    Selection strategies decide how to use the columns, including which direction
     is preferable. Metadata describes the evaluator and any reference context.
     """
 
@@ -37,7 +37,7 @@ class Evaluation:
 
 
 class ImageEvaluator(Protocol):
-    """Implement this method to supply measurements to a future search policy.
+    """Supply measurements for standalone inspection or use inside a selection strategy.
 
     Images are uint8 arrays shaped H×W (grayscale) or H×W×3 (RGB).
     Preserve input order, including duplicates. An empty input produces zero
