@@ -181,13 +181,14 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
     images from this and earlier grids. Construct a fresh instance per run.
     """
 
-    def __init__(self, comprehension_weight=.5, *, observer_initialization="random",
+    def __init__(self, comprehension_weight=.5, *, comprehension_warmup_steps=10, observer_initialization="random",
                  training_steps=20, batch_size=16, learning_rate=.001, cache_dir=None, device="cpu"):
         if isinstance(comprehension_weight, bool) or not isinstance(comprehension_weight, Real) or not 0 <= comprehension_weight <= 1:
             raise ValueError("comprehension_weight must be in [0, 1].")
         if observer_initialization not in ("random", "imagenet"):
             raise ValueError("observer_initialization must be random or imagenet.")
-        for name, value, minimum in (("training_steps", training_steps, 1), ("batch_size", batch_size, 2)):
+        for name, value, minimum in (("comprehension_warmup_steps", comprehension_warmup_steps, 0),
+                                    ("training_steps", training_steps, 1), ("batch_size", batch_size, 2)):
             if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
                 raise ValueError(f"{name} must be an integer >= {minimum}.")
         if isinstance(learning_rate, bool) or not isinstance(learning_rate, Real) or not np.isfinite(learning_rate) or learning_rate <= 0:
@@ -196,6 +197,7 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
         from .image_predictability import MaskedImageObserver
 
         self.comprehension_weight = float(comprehension_weight)
+        self.comprehension_warmup_steps = comprehension_warmup_steps
         self.training_steps, self.batch_size = training_steps, batch_size
         self.observer = MaskedImageObserver(initialization=observer_initialization,
                                           learning_rate=learning_rate, cache_dir=cache_dir, device=device)
@@ -218,11 +220,15 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
         comprehension = 1 - errors if available else np.zeros(len(images))
         novelty_ranks = _percentile_ranks(novelty)
         comprehension_ranks = _percentile_ranks(comprehension)
-        scores = (1 - self.comprehension_weight) * novelty_ranks + self.comprehension_weight * comprehension_ranks
+        warmup_complete = self._generation >= self.comprehension_warmup_steps
+        weight = self.comprehension_weight if available and warmup_complete else 0.0
+        scores = (1 - weight) * novelty_ranks + weight * comprehension_ranks
         if available:
             position = int(scores.argmax())
         metadata.update({
             "comprehension_available": available,
+            "comprehension_warmup_complete": warmup_complete,
+            "effective_comprehension_weight": weight,
             "measurement_available": [available, available],
             "masked_mse": errors.tolist() if available else [None] * len(images),
             "novelty_ranks": novelty_ranks.tolist(), "comprehension_ranks": comprehension_ranks.tolist(),
@@ -260,7 +266,8 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
     def describe(self):
         return super().describe() | {
             "selection_strategy": "novelty-predictability", "comprehension_weight": self.comprehension_weight,
-            "score": "(1-weight)*novelty_rank + weight*comprehension_rank; first grid neutral",
+            "comprehension_warmup_steps": self.comprehension_warmup_steps,
+            "score": "(1-weight)*novelty_rank + weight*comprehension_rank; weight zero during comprehension warmup; first grid neutral",
             "comprehension": "1 - masked MSE before current-grid training; initially unavailable",
             "observer": self.observer.describe(), "training_steps": self.training_steps,
             "batch_size": self.batch_size, "replay": "all distinct displayed images in first-seen order, including rejects",
@@ -274,7 +281,7 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
     target observer and the trainable scalar predictor are separate models.
     """
 
-    def __init__(self, comprehension_weight=.5, *, gamma=1., warmup_targets=10,
+    def __init__(self, comprehension_weight=.5, *, comprehension_warmup_steps=10, gamma=1., warmup_targets=10,
                  predictor_training_steps=10, predictor_batch_size=16, predictor_learning_rate=.001,
                  observer_initialization="random", training_steps=20, batch_size=16,
                  learning_rate=.001, cache_dir=None, device="cpu"):
@@ -289,8 +296,9 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
                 or not np.isfinite(predictor_learning_rate) or predictor_learning_rate <= 0):
             raise ValueError("predictor_learning_rate must be positive and finite.")
         if observer_initialization != "random":
-            raise ValueError("Experiment 2 uses a scratch observer; observer_initialization must be random.")
+            raise ValueError("offspring-value uses a scratch observer; observer_initialization must be random.")
         super().__init__(comprehension_weight, observer_initialization=observer_initialization,
+                         comprehension_warmup_steps=comprehension_warmup_steps,
                          training_steps=training_steps, batch_size=batch_size,
                          learning_rate=learning_rate, cache_dir=cache_dir, device=device)
         from .offspring_prediction import OffspringValuePredictor
@@ -359,6 +367,7 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
             self._predictor_seed = self._predictor_run_seed("initialize", 0)
             self.predictor.initialize(self._predictor_seed)
         available = metadata["reference_available"]
+        target_eligible = bool(available and metadata["comprehension_warmup_complete"])
         forecasts = np.zeros(9)
         contexts = inputs = None
         inference_seconds = snapshot_seconds = 0.
@@ -373,12 +382,13 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
             if forecasts.shape != (9,) or not np.isfinite(forecasts).all() or np.any((forecasts < 0) | (forecasts > 1)):
                 raise ValueError("Predictor must return nine finite forecasts in [0, 1].")
         ready = len(self._transitions) >= self.warmup_targets
-        used = bool(available and ready and self.gamma > 0)
+        used = bool(target_eligible and ready and self.gamma > 0)
         scores = current + self.gamma*forecasts if used else current.copy()
         position = int(scores.argmax()) if available else base_position
         predictor_state = self.predictor.state_hash()
         pending_record = None
-        if available:
+        # Eligibility belongs to the parent-selection time, not child arrival.
+        if target_eligible:
             start = time.perf_counter()
             frozen = FrozenOffspringValue(reference_mean=self._previous_mean,
                 novelty_reference=novelty, comprehension_reference=comprehension,
@@ -402,6 +412,7 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
             "forecasts": forecasts.tolist(), "forecast_available": bool(available), "forecast_used": used,
             "gamma": self.gamma, "warmup_targets": self.warmup_targets, "warmup_complete": ready,
             "completed_targets": len(self._transitions), "replay_size": len(self._transitions),
+            "target_eligible": target_eligible,
             "current_values": current.tolist(), "contexts": contexts.tolist() if available else None,
             "base_position": base_position, "choice_changed": position != base_position,
             "initialization_seed": self._predictor_seed, "predictor_state": predictor_state,
@@ -424,11 +435,11 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
             "gamma": self.gamma, "warmup_targets": self.warmup_targets,
             "predictor": self.predictor.describe(), "predictor_training_steps": self.predictor_training_steps,
             "predictor_batch_size": self.predictor_batch_size,
-            "predictor_replay": "all completed selected-parent transitions in chronological order; no deduplication or relabeling",
+            "predictor_replay": "completed transitions from parents selected after comprehension warmup, in chronological order; no deduplication or relabeling",
             "seed_derivation": "SHA256 ASCII offspring-value-v1:{observer_seed}:{initialize|update}:{generation}; first eight bytes big-endian masked to 63 bits",
             "target": "mean eight actual children under selection-time frozen observer, previous-grid mean and nine fixed rank references",
             "lifecycle": "fresh instance; nine RGB candidates, retained selected parent first; chronological calls only",
-            "missing_targets": "first transition ineligible; final selection unobserved; max(S-2,0) targets",
+            "missing_targets": "first grid and parents selected during comprehension warmup ineligible; final selection unobserved; max(S-max(comprehension_warmup_steps,1)-1,0) targets",
         }
 
 

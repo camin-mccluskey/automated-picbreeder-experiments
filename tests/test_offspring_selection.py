@@ -49,7 +49,7 @@ def grid(): return [np.full((8, 8, 3), v, dtype=np.uint8) for v in range(0, 225,
 
 
 def test_delayed_forecasts_warmup_repeated_transitions_and_copied_records(controlled):
-    strategy = OffspringValueSelectionStrategy(warmup_targets=2, gamma=20, training_steps=1,
+    strategy = OffspringValueSelectionStrategy(comprehension_warmup_steps=0, warmup_targets=2, gamma=20, training_steps=1,
                                                predictor_training_steps=1)
     rng = Random(7)
     images = grid()
@@ -84,9 +84,10 @@ def test_delayed_forecasts_warmup_repeated_transitions_and_copied_records(contro
     assert any(d.evaluation.metadata['offspring']['choice_changed'] for d in decisions)
 
 
-def test_gamma_zero_preserves_observer_choices_and_selection_rng(controlled):
-    baseline = NoveltyPredictabilitySelectionStrategy(training_steps=1)
-    strategy = OffspringValueSelectionStrategy(gamma=0, warmup_targets=1, training_steps=1)
+@pytest.mark.parametrize('warmup', [0, 2, 10])
+def test_gamma_zero_preserves_observer_choices_and_selection_rng(controlled, warmup):
+    baseline = NoveltyPredictabilitySelectionStrategy(comprehension_warmup_steps=warmup, training_steps=1)
+    strategy = OffspringValueSelectionStrategy(comprehension_warmup_steps=warmup, gamma=0, warmup_targets=1, training_steps=1)
     a, b = Random(7), Random(7)
     images = grid()
     for _ in range(5):
@@ -97,9 +98,45 @@ def test_gamma_zero_preserves_observer_choices_and_selection_rng(controlled):
         assert x.evaluation.metadata['observer_state_after'] == y.evaluation.metadata['observer_state_after']
         assert a.getstate() == b.getstate()
         images = [images[x.position]] + grid()[:8]
-    assert len(strategy._transitions) == 3
-    assert strategy.predictor.updates == 30
+    targets = max(5 - max(warmup, 1) - 1, 0)
+    assert len(strategy._transitions) == targets
+    assert strategy.predictor.updates == 10 * targets
     assert OffspringValueSelectionStrategy()._transitions == []
+
+
+@pytest.mark.parametrize('warmup,targets', [(0, 1), (1, 2), (3, 2), (10, 10)])
+def test_sequential_warmups_exclude_early_parents_and_train_before_forecast_selection(controlled, warmup, targets):
+    strategy = OffspringValueSelectionStrategy(comprehension_warmup_steps=warmup,
+        warmup_targets=targets, gamma=20, training_steps=1, predictor_training_steps=1)
+    rng, images = Random(7), grid()
+    first_eligible = max(warmup, 1)
+    for t in range(first_eligible + targets + 2):
+        decision = strategy.choose(images, rng=rng)
+        meta = decision.evaluation.metadata
+        offspring = meta['offspring']
+        completed = max(t-first_eligible, 0)
+        assert offspring['target_eligible'] == (t >= first_eligible)
+        assert offspring['completed_targets'] == completed
+        assert offspring['warmup_complete'] == (completed >= targets)
+        assert offspring['forecast_used'] == (completed >= targets)
+        assert strategy.predictor.updates == completed
+        assert strategy.observer.updates == t+1
+        if t < first_eligible:
+            assert offspring['pending'] is None
+            assert strategy._pending is None
+        else:
+            assert offspring['pending']['origin_generation'] == t
+        if completed == 0:
+            assert offspring['feedback'] is None and offspring['training'] is None
+        else:
+            assert offspring['feedback']['origin_generation'] == t-1
+            assert offspring['feedback']['target_context']['observer_state_hash'] == str(t-1)
+            assert offspring['training']['state_after'] == str(completed)
+        if offspring['forecast_used']:
+            np.testing.assert_allclose(decision.scores,
+                np.array(offspring['current_values']) + 20*np.array(offspring['forecasts']))
+        images = [images[decision.position]] + grid()[:8]
+    assert all(t['origin_generation'] >= first_eligible for t in strategy._transitions)
 
 
 def test_bad_chronology_rejected_before_any_training(controlled):
@@ -119,7 +156,8 @@ def test_bad_chronology_rejected_before_any_training(controlled):
 @pytest.mark.parametrize('kwargs', [{'gamma': -1}, {'gamma': float('nan')}, {'gamma': True},
     {'warmup_targets': 0}, {'warmup_targets': True}, {'predictor_training_steps': 0},
     {'predictor_batch_size': 0}, {'predictor_learning_rate': float('inf')},
-    {'observer_initialization': 'imagenet'}])
+    {'observer_initialization': 'imagenet'}, {'comprehension_warmup_steps': -1},
+    {'comprehension_warmup_steps': True}, {'comprehension_warmup_steps': 1.5}])
 def test_invalid_configuration(kwargs):
     with pytest.raises(ValueError): OffspringValueSelectionStrategy(**kwargs)
 
@@ -134,7 +172,7 @@ def test_real_saved_replay_ancestry_and_gamma_zero_trajectory(tmp_path, device):
     old_threads = torch.get_num_threads()
     torch.set_num_threads(1)
     try:
-        kwargs = dict(training_steps=1, batch_size=2, device=device)
+        kwargs = dict(comprehension_warmup_steps=2, training_steps=1, batch_size=2, device=device)
         options = dict(**kwargs, gamma=0, warmup_targets=1, predictor_training_steps=2, predictor_batch_size=2)
         settings = ExperimentSettings(steps=4, size=8, checkpoint_every=2)
         output = tmp_path / 'offspring'
@@ -170,7 +208,7 @@ def test_real_saved_replay_ancestry_and_gamma_zero_trajectory(tmp_path, device):
             if t:
                 assert event['displayed'][0] == events[t-1]['genome']
                 assert all(records[k]['parent'] == events[t-1]['genome'] for k in event['displayed'][1:])
-        assert len(replay._transitions) == 2
+        assert len(replay._transitions) == 1
         assert events[-1]['evaluation']['metadata']['offspring']['pending']['origin_generation'] == 3
         assert data['summary']['candidate_presentations'] == 36
         assert len(records) == 33

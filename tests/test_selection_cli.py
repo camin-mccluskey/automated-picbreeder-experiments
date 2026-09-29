@@ -43,6 +43,7 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
     elif name in ("novelty-predictability", "offspring-value"):
         assert strategy.describe()["selection_strategy"] == name
         assert strategy.comprehension_weight == .5
+        assert strategy.comprehension_warmup_steps == 10
         assert strategy.observer.model is None
         factory.assert_not_called()
     else:
@@ -53,6 +54,13 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
 
 
 @pytest.mark.parametrize("args", [
+    ["--selection-strategy", "imagenet", "--imagenet-batch-size", "0"],
+    ["--selection-strategy", "imagenet", "--imagenet-weights", "DEFAULT"],
+    ["--selection-strategy", "random", "--cache-dir", "weights"],
+    ["--selection-strategy", "novelty", "--cache-dir", "weights"],
+    ["--selection-strategy", "novelty-predictability", "--imagenet-model", "resnet50"],
+    ["--selection-strategy", "offspring-value", "--imagenet-weights", "IMAGENET1K_V2"],
+    ["--selection-strategy", "random", "--imagenet-batch-size", "4"],
     ["--selection-strategy", "offspring-value", "--gamma", "nan"],
     ["--selection-strategy", "offspring-value", "--warmup-targets", "0"],
     ["--selection-strategy", "offspring-value", "--predictor-training-steps", "0"],
@@ -66,6 +74,11 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
     ["--selection-strategy", "novelty-predictability", "--comprehension-weight", "nan"],
     ["--selection-strategy", "novelty-predictability", "--observer-batch-size", "1"],
     ["--selection-strategy", "novelty-predictability", "--training-steps", "0"],
+    ["--selection-strategy", "novelty-predictability", "--comprehension-warmup-steps", "-1"],
+    ["--selection-strategy", "offspring-value", "--comprehension-warmup-steps", "-1"],
+    ["--selection-strategy", "novelty", "--comprehension-warmup-steps", "10"],
+    ["--selection-strategy", "random", "--comprehension-warmup-steps", "10"],
+    ["--selection-strategy", "imagenet", "--comprehension-warmup-steps", "10"],
     ["--selection-strategy", "novelty-predictability", "--epsilon", "0"],
     ["--selection-strategy", "imagenet", "--epsilon", "-0.1"],
     ["--selection-strategy", "imagenet", "--epsilon", "1.1"],
@@ -106,6 +119,77 @@ def test_observer_cli_passes_explicit_device(tmp_path, monkeypatch):
     main(["--selection-strategy", "novelty-predictability", "--device", "mps", "--output", str(tmp_path / "run")])
     assert factory.call_args.kwargs['device'] == 'mps'
     assert runner.call_args.kwargs['selection_strategy'] is factory.return_value
+
+
+@pytest.mark.parametrize("name,factory_name", [
+    ("novelty-predictability", "NoveltyPredictabilitySelectionStrategy"),
+    ("offspring-value", "OffspringValueSelectionStrategy"),
+])
+def test_cli_forwards_all_observer_predictor_and_run_options(tmp_path, monkeypatch, name, factory_name):
+    main = runpy.run_path(str(CLI))["main"]
+    factory = Mock()
+    runner = Mock(return_value={"decisions": 12})
+    monkeypatch.setitem(main.__globals__, factory_name, factory)
+    monkeypatch.setitem(main.__globals__, "run_experiment", runner)
+    initialization = "imagenet" if name == "novelty-predictability" else "random"
+    output, cache = tmp_path / "run", tmp_path / "weights"
+    args = [
+        "--selection-strategy", name, "--output", str(output), "--cache-dir", str(cache),
+        "--device", "mps", "--comprehension-weight", "0.7",
+        "--comprehension-warmup-steps", "0",
+        "--observer-initialization", initialization, "--training-steps", "3",
+        "--observer-batch-size", "4", "--learning-rate", "0.002",
+        "--seed", "9", "--selection-seed", "42", "--steps", "12", "--size", "32",
+        "--mutation-strength", "0.4", "--no-topology", "--checkpoint-every", "3",
+    ]
+    expected = dict(comprehension_weight=.7, comprehension_warmup_steps=0, observer_initialization=initialization,
+                    training_steps=3, batch_size=4, learning_rate=.002,
+                    device="mps", cache_dir=cache)
+    if name == "offspring-value":
+        args += ["--gamma", "0.3", "--warmup-targets", "2", "--predictor-training-steps", "5",
+                 "--predictor-batch-size", "6", "--predictor-learning-rate", "0.003"]
+        expected.update(gamma=.3, warmup_targets=2, predictor_training_steps=5,
+                        predictor_batch_size=6, predictor_learning_rate=.003)
+    main(args)
+    factory.assert_called_once_with(**expected)
+    runner.assert_called_once_with(
+        selection_strategy=factory.return_value, output_dir=output,
+        settings=ExperimentSettings(seed=9, selection_seed=42, steps=12, size=32,
+                                    mutation_strength=.4, topology=False, checkpoint_every=3),
+    )
+
+
+def test_cli_forwards_all_imagenet_options(tmp_path, monkeypatch):
+    main = runpy.run_path(str(CLI))["main"]
+    factory = Mock()
+    runner = Mock(return_value={"decisions": 100})
+    monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", factory)
+    monkeypatch.setitem(main.__globals__, "run_experiment", runner)
+    cache = tmp_path / "weights"
+    main(["--selection-strategy", "imagenet", "--epsilon", "0.25",
+          "--imagenet-model", "resnet50", "--imagenet-weights", "IMAGENET1K_V2",
+          "--imagenet-batch-size", "3", "--device", "cuda", "--cache-dir", str(cache),
+          "--output", str(tmp_path / "run")])
+    factory.assert_called_once_with(model_name="resnet50", weights="IMAGENET1K_V2",
+                                    batch_size=3, device="cuda", cache_dir=cache)
+    strategy = runner.call_args.kwargs["selection_strategy"]
+    assert strategy.epsilon == .25
+    assert strategy.evaluator is factory.return_value
+
+
+def test_invalid_imagenet_configuration_is_reported_as_cli_error(tmp_path, monkeypatch, capsys):
+    main = runpy.run_path(str(CLI))["main"]
+    factory = Mock(side_effect=ValueError("Unknown model 'invalid'"))
+    runner = Mock()
+    monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", factory)
+    monkeypatch.setitem(main.__globals__, "run_experiment", runner)
+    output = tmp_path / "run"
+    with pytest.raises(SystemExit) as failure:
+        main(["--selection-strategy", "imagenet", "--imagenet-model", "invalid", "--output", str(output)])
+    assert failure.value.code == 2
+    assert "Unknown model 'invalid'" in capsys.readouterr().err
+    assert not output.exists()
+    runner.assert_not_called()
 
 
 @pytest.mark.parametrize("strategy_name", ["random", "novelty"])

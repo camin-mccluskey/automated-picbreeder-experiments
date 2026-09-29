@@ -2,13 +2,12 @@
 
 ## Objective and hypothesis
 
-The current-image selection experiments in [THOUGHTS.md](../THOUGHTS.md) now also
-have pixel-novelty and novelty-plus-predictability strategies, with a comparison
-workflow described in the [README](../README.md#run-the-experiment-1-comparison).
-They use the same breeding loop. Their online masked-image observers are separate
-from the CPPNs being evolved; observer learning and pixel diversity are not UFR
-evidence. Future-offspring prediction remains a separate, unimplemented experiment.
-The classifier-based representation study below retains its original objective.
+All automated selection strategies run through `experiments/run_selection.py`;
+see the [README](../README.md#automated-selection-experiments) for configuration.
+Pixel novelty, online image predictability and offspring-value prediction use the
+same breeding loop. Their observers and predictors are separate from the CPPNs
+being evolved; observer learning and pixel diversity are not UFR evidence.
+The representation study below retains its scientific objective.
 
 Test whether classifier-guided selection in a Picbreeder-style breeding loop can produce compositional pattern-producing networks (CPPNs) with evidence of **unified factored representations (UFR)**, as described by Kumar et al. [1].
 
