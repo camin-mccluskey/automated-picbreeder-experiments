@@ -174,6 +174,71 @@ class NoveltySelectionStrategy:
         }
 
 
+class NoveltyImageNetSelectionStrategy(NoveltySelectionStrategy):
+    """Combine pixel novelty ranks with frozen maximum-class confidence ranks.
+
+    Confidence is available immediately; the first grid has neutral novelty.
+    Weight zero preserves novelty's uniform first choice. No training or warm-up
+    is needed. Construct a fresh strategy per run to reset the novelty reference.
+    """
+
+    def __init__(self, comprehension_weight=.5, *, evaluator: "ImageNetEvaluator | None" = None):
+        if isinstance(comprehension_weight, bool) or not isinstance(comprehension_weight, Real) or not 0 <= comprehension_weight <= 1:
+            raise ValueError("comprehension_weight must be in [0, 1].")
+        super().__init__()
+        self.comprehension_weight = float(comprehension_weight)
+        if evaluator is None:
+            from .imagenet import ImageNetEvaluator
+
+            evaluator = ImageNetEvaluator()
+        self.evaluator = evaluator
+
+    def _score_current(self, images, rng):
+        pixels, novelty, metadata = self._measure(images)
+        classification = self.evaluator.evaluate(images)
+        if len(classification.values) != len(images):
+            raise ValueError("Evaluation must contain one row per displayed candidate.")
+        confidence = classification.values.max(axis=1)
+        novelty_ranks = _percentile_ranks(novelty)
+        confidence_ranks = _percentile_ranks(confidence)
+        weight = self.comprehension_weight
+        scores = (1 - weight) * novelty_ranks + weight * confidence_ranks
+        random_first = not metadata["reference_available"] and weight == 0
+        metadata.update({
+            "measurement_available": [metadata["reference_available"], True],
+            "novelty_ranks": novelty_ranks.tolist(),
+            "confidence_ranks": confidence_ranks.tolist(),
+            "classifier_evaluation": {
+                "values": classification.values.tolist(), "names": list(classification.names),
+                "metadata": deepcopy(classification.metadata),
+            },
+        })
+        position = rng.randrange(len(images)) if random_first else int(scores.argmax())
+        return pixels, novelty, confidence, scores, position, metadata
+
+    def choose(self, images: Sequence[ImageArray], *, rng: Random) -> SelectionDecision:
+        pixels, novelty, confidence, scores, position, metadata = self._score_current(images, rng)
+        random_first = not metadata["reference_available"] and self.comprehension_weight == 0
+        decision = SelectionDecision(
+            position=position, mode="random" if random_first else "greedy",
+            evaluation=Evaluation(np.column_stack((novelty, confidence)),
+                                  ("pixel_novelty", "imagenet_confidence"), metadata),
+            scores=scores,
+        )
+        self._remember(pixels, metadata["image_hashes"])
+        return decision
+
+    def describe(self):
+        return super().describe() | {
+            "selection_strategy": "novelty-imagenet", "comprehension_weight": self.comprehension_weight,
+            "score": "(1-weight)*novelty_rank + weight*confidence_rank; average ties",
+            "comprehension": "maximum frozen ImageNet class probability; available from the first grid",
+            "rule": "first maximum score; uniform first choice only when comprehension_weight=0",
+            "first_grid": "zero raw novelty, neutral novelty ranks, reference_available=false; confidence available",
+            "evaluator": self.evaluator.describe(),
+        }
+
+
 class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
     """Combine pixel novelty and pre-update masked prediction accuracy.
 
@@ -274,17 +339,17 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
         }
 
 
-class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
-    """Learn selected-parent -> mean actual child value, with one-call delayed feedback.
+class _OffspringValueMixin:
+    """Shared delayed targets, predictor replay and additive forecast selection.
 
-    Requires chronological nine-image grids, retained parent first. The frozen
-    target observer and the trainable scalar predictor are separate models.
+    Concrete strategies supply current values, frozen targets, predictor context
+    and seeds, and their end-of-grid update. This is internal implementation reuse;
+    callers still configure one complete SelectionStrategy.
     """
 
-    def __init__(self, comprehension_weight=.5, *, comprehension_warmup_steps=10, gamma=1., warmup_targets=10,
+    def __init__(self, *, gamma=1., warmup_targets=10,
                  predictor_training_steps=10, predictor_batch_size=16, predictor_learning_rate=.001,
-                 observer_initialization="random", training_steps=20, batch_size=16,
-                 learning_rate=.001, cache_dir=None, device="cpu"):
+                 predictor_device="cpu", predictor_value_source="predictability", **value_options):
         for name, value, minimum in (("warmup_targets", warmup_targets, 1),
                 ("predictor_training_steps", predictor_training_steps, 1),
                 ("predictor_batch_size", predictor_batch_size, 1)):
@@ -295,31 +360,23 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
         if (isinstance(predictor_learning_rate, bool) or not isinstance(predictor_learning_rate, Real)
                 or not np.isfinite(predictor_learning_rate) or predictor_learning_rate <= 0):
             raise ValueError("predictor_learning_rate must be positive and finite.")
-        if observer_initialization != "random":
-            raise ValueError("offspring-value uses a scratch observer; observer_initialization must be random.")
-        super().__init__(comprehension_weight, observer_initialization=observer_initialization,
-                         comprehension_warmup_steps=comprehension_warmup_steps,
-                         training_steps=training_steps, batch_size=batch_size,
-                         learning_rate=learning_rate, cache_dir=cache_dir, device=device)
         from .offspring_prediction import OffspringValuePredictor
+        self.predictor = OffspringValuePredictor(learning_rate=predictor_learning_rate,
+            device=predictor_device, value_source=predictor_value_source)
+        super().__init__(**value_options)
         self.gamma, self.warmup_targets = float(gamma), warmup_targets
         self.predictor_training_steps, self.predictor_batch_size = predictor_training_steps, predictor_batch_size
-        self.predictor = OffspringValuePredictor(learning_rate=predictor_learning_rate, device=device)
         self._predictor_seed = None
         self._transitions = []
         self._pending = None
         self._expected_parent_hash = None
 
-    def _predictor_run_seed(self, purpose, generation):
-        payload = f"offspring-value-v1:{self._initialization_seed}:{purpose}:{generation}"
-        return int.from_bytes(hashlib.sha256(payload.encode("ascii")).digest()[:8], "big") & ((1 << 63) - 1)
-
-    def _receive_feedback(self, images):
+    def _receive_feedback(self, images, **measurement_options):
         if self._pending is None:
             return None, None, 0., 0.
         pending = self._pending
         start = time.perf_counter()
-        observed = pending["target_context"].evaluate_offspring(images)
+        observed = pending["target_context"].evaluate_offspring(images, **measurement_options)
         target_seconds = time.perf_counter() - start
         target = observed.metadata["mean_offspring_value"]
         record = pending["record"]
@@ -335,7 +392,7 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
         }
         self._transitions.append({"inputs": pending["inputs"], "target": target,
                                   "origin_generation": record["origin_generation"]})
-        # Release the only observer snapshot before creating the next one.
+        # Release the previous target context before creating the next one.
         self._pending = None
         del pending
         seed = self._predictor_run_seed("update", self._generation)
@@ -348,8 +405,6 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
         return feedback, training, target_seconds, training_seconds
 
     def choose(self, images: Sequence[ImageArray], *, rng: Random) -> SelectionDecision:
-        from .offspring_value import FrozenOffspringValue
-
         if len(images) != 9:
             raise ValueError("Expected nine RGB candidates: retained parent followed by eight children.")
         for image in images:
@@ -361,20 +416,19 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
         if self._expected_parent_hash is not None and _image_hash(images[0]) != self._expected_parent_hash:
             raise ValueError("Retained parent does not match the previous selected parent.")
 
-        feedback, training, target_seconds, training_seconds = self._receive_feedback(images)
-        pixels, novelty, comprehension, current, base_position, metadata = self._score_current(images, rng)
+        measured, received = self._measure_and_receive(images, rng)
+        feedback, training, target_seconds, training_seconds = received
+        pixels, novelty, comprehension, current, base_position, metadata = measured
         if self._predictor_seed is None:
             self._predictor_seed = self._predictor_run_seed("initialize", 0)
             self.predictor.initialize(self._predictor_seed)
         available = metadata["reference_available"]
-        target_eligible = bool(available and metadata["comprehension_warmup_complete"])
+        target_eligible = self._target_eligible(metadata)
         forecasts = np.zeros(9)
         contexts = inputs = None
         inference_seconds = snapshot_seconds = 0.
         if available:
-            shared = np.r_[np.sort(novelty), np.sort(comprehension),
-                           np.log1p(self._generation*self.training_steps), np.log1p(len(self._replay))]
-            contexts = np.column_stack((novelty, comprehension, current, np.tile(shared, (9, 1))))
+            contexts = self._prediction_context(novelty, comprehension, current)
             inputs = self.predictor.prepare(images, self._previous_mean, contexts)
             start = time.perf_counter()
             forecasts = np.asarray(self.predictor.predict(inputs), dtype=np.float64)
@@ -390,10 +444,7 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
         # Eligibility belongs to the parent-selection time, not child arrival.
         if target_eligible:
             start = time.perf_counter()
-            frozen = FrozenOffspringValue(reference_mean=self._previous_mean,
-                novelty_reference=novelty, comprehension_reference=comprehension,
-                observer=self.observer, selected_parent=images[position], origin_generation=self._generation,
-                comprehension_weight=self.comprehension_weight)
+            frozen = self._freeze_target(novelty, comprehension, images[position])
             snapshot_seconds = time.perf_counter() - start
             pending_record = {
                 "origin_generation": self._generation, "selected_position": position,
@@ -419,27 +470,148 @@ class OffspringValueSelectionStrategy(NoveltyPredictabilitySelectionStrategy):
             "feedback": feedback, "training": training, "pending": pending_record,
             "target_scoring_seconds": target_seconds, "predictor_training_seconds": training_seconds,
             "inference_seconds": inference_seconds, "snapshot_seconds": snapshot_seconds,
-            "target_masked_inputs_scored": 128 if feedback is not None else 0,
+            **self._target_cost(feedback),
         }
         metadata["offspring"] = deepcopy(metadata["offspring"])
-        self._update_observer(images, pixels, metadata, rng)
-        metadata["measurement_available"] = [bool(available)]*4
-        return SelectionDecision(position, "greedy" if available else "random",
+        self._finish_grid(images, pixels, metadata, rng)
+        metadata["measurement_available"] += [self._current_value_available(metadata), bool(available)]
+        return SelectionDecision(position, self._selection_mode(metadata),
             Evaluation(np.column_stack((novelty, comprehension, current, forecasts)),
-                       ("pixel_novelty", "comprehension", "current_value", "predicted_offspring_value"), metadata), scores)
+                       ("pixel_novelty", self._quality_name, "current_value", "predicted_offspring_value"), metadata), scores)
 
     def describe(self):
         return super().describe() | {
-            "selection_strategy": "offspring-value", "version": 1,
             "score": "current_value + gamma*predicted_mean_offspring_value after warmup; otherwise current_value",
             "gamma": self.gamma, "warmup_targets": self.warmup_targets,
             "predictor": self.predictor.describe(), "predictor_training_steps": self.predictor_training_steps,
             "predictor_batch_size": self.predictor_batch_size,
+            "lifecycle": "fresh instance; nine RGB candidates, retained selected parent first; chronological calls only",
+        }
+
+
+class OffspringValueSelectionStrategy(_OffspringValueMixin, NoveltyPredictabilitySelectionStrategy):
+    """Predict mean child value under selection-time patch predictability and novelty."""
+
+    _quality_name = "comprehension"
+
+    def __init__(self, comprehension_weight=.5, *, comprehension_warmup_steps=10, gamma=1., warmup_targets=10,
+                 predictor_training_steps=10, predictor_batch_size=16, predictor_learning_rate=.001,
+                 observer_initialization="random", training_steps=20, batch_size=16,
+                 learning_rate=.001, cache_dir=None, device="cpu"):
+        if observer_initialization != "random":
+            raise ValueError("offspring-value uses a scratch observer; observer_initialization must be random.")
+        super().__init__(comprehension_weight=comprehension_weight, comprehension_warmup_steps=comprehension_warmup_steps,
+            observer_initialization=observer_initialization, training_steps=training_steps, batch_size=batch_size,
+            learning_rate=learning_rate, cache_dir=cache_dir, device=device, predictor_device=device,
+            gamma=gamma, warmup_targets=warmup_targets, predictor_training_steps=predictor_training_steps,
+            predictor_batch_size=predictor_batch_size, predictor_learning_rate=predictor_learning_rate)
+
+    def _predictor_run_seed(self, purpose, generation):
+        payload = f"offspring-value-v1:{self._initialization_seed}:{purpose}:{generation}"
+        return int.from_bytes(hashlib.sha256(payload.encode("ascii")).digest()[:8], "big") & ((1 << 63) - 1)
+
+    def _measure_and_receive(self, images, rng):
+        feedback = self._receive_feedback(images)
+        return self._score_current(images, rng), feedback
+
+    def _target_eligible(self, metadata):
+        return bool(metadata["reference_available"] and metadata["comprehension_warmup_complete"])
+
+    def _prediction_context(self, novelty, comprehension, current):
+        shared = np.r_[np.sort(novelty), np.sort(comprehension),
+                       np.log1p(self._generation*self.training_steps), np.log1p(len(self._replay))]
+        return np.column_stack((novelty, comprehension, current, np.tile(shared, (9, 1))))
+
+    def _freeze_target(self, novelty, comprehension, selected_parent):
+        from .offspring_value import FrozenOffspringValue
+
+        return FrozenOffspringValue(reference_mean=self._previous_mean,
+            novelty_reference=novelty, comprehension_reference=comprehension, observer=self.observer,
+            selected_parent=selected_parent, origin_generation=self._generation,
+            comprehension_weight=self.comprehension_weight)
+
+    def _target_cost(self, feedback):
+        return {"target_masked_inputs_scored": 128 if feedback is not None else 0}
+
+    def _finish_grid(self, images, pixels, metadata, rng):
+        self._update_observer(images, pixels, metadata, rng)
+
+    def _current_value_available(self, metadata):
+        return bool(metadata["reference_available"])
+
+    def _selection_mode(self, metadata):
+        return "greedy" if metadata["reference_available"] else "random"
+
+    def describe(self):
+        return super().describe() | {
+            "selection_strategy": "offspring-value", "version": 1,
             "predictor_replay": "completed transitions from parents selected after comprehension warmup, in chronological order; no deduplication or relabeling",
             "seed_derivation": "SHA256 ASCII offspring-value-v1:{observer_seed}:{initialize|update}:{generation}; first eight bytes big-endian masked to 63 bits",
             "target": "mean eight actual children under selection-time frozen observer, previous-grid mean and nine fixed rank references",
-            "lifecycle": "fresh instance; nine RGB candidates, retained selected parent first; chronological calls only",
             "missing_targets": "first grid and parents selected during comprehension warmup ineligible; final selection unobserved; max(S-max(comprehension_warmup_steps,1)-1,0) targets",
+        }
+
+
+class OffspringValueImageNetSelectionStrategy(_OffspringValueMixin, NoveltyImageNetSelectionStrategy):
+    """Predict mean child value under fixed ImageNet confidence and local novelty."""
+
+    _quality_name = "imagenet_confidence"
+
+    def __init__(self, comprehension_weight=.5, *, evaluator: "ImageNetEvaluator | None" = None,
+                 gamma=1., warmup_targets=10, predictor_training_steps=10, predictor_batch_size=16,
+                 predictor_learning_rate=.001, device="cpu"):
+        super().__init__(comprehension_weight=comprehension_weight, evaluator=evaluator,
+            gamma=gamma, warmup_targets=warmup_targets, predictor_training_steps=predictor_training_steps,
+            predictor_batch_size=predictor_batch_size, predictor_learning_rate=predictor_learning_rate,
+            predictor_device=device, predictor_value_source="imagenet")
+        self._seed_material = None
+
+    def _predictor_run_seed(self, purpose, generation):
+        payload = f"offspring-value-imagenet-v1:{self._seed_material}:{purpose}:{generation}"
+        return int.from_bytes(hashlib.sha256(payload.encode("ascii")).digest()[:8], "big") & ((1 << 63) - 1)
+
+    def _measure_and_receive(self, images, rng):
+        if self._seed_material is None:
+            # Read the supplied run RNG without consuming selection draws.
+            self._seed_material = hashlib.sha256(repr(rng.getstate()).encode("ascii")).hexdigest()
+        measured = self._score_current(images, rng)
+        return measured, self._receive_feedback(images, confidence=measured[2][1:])
+
+    def _target_eligible(self, metadata):
+        return bool(metadata["reference_available"])
+
+    def _prediction_context(self, novelty, confidence, current):
+        shared = np.r_[np.sort(novelty), np.sort(confidence)]
+        return np.column_stack((novelty, confidence, current, np.tile(shared, (9, 1))))
+
+    def _freeze_target(self, novelty, confidence, selected_parent):
+        from .offspring_value import FrozenImageNetOffspringValue
+
+        return FrozenImageNetOffspringValue(reference_mean=self._previous_mean,
+            novelty_reference=novelty, confidence_reference=confidence, evaluator_metadata=self.evaluator.describe(),
+            selected_parent=selected_parent, origin_generation=self._generation,
+            comprehension_weight=self.comprehension_weight)
+
+    def _target_cost(self, feedback):
+        return {"target_classifier_images_scored": 0,
+                "target_classifier_measurements_reused": 8 if feedback is not None else 0}
+
+    def _finish_grid(self, images, pixels, metadata, rng):
+        self._remember(pixels, metadata["image_hashes"])
+
+    def _current_value_available(self, metadata):
+        return True
+
+    def _selection_mode(self, metadata):
+        return "random" if not metadata["reference_available"] and self.comprehension_weight == 0 else "greedy"
+
+    def describe(self):
+        return super().describe() | {
+            "selection_strategy": "offspring-value-imagenet", "version": 1,
+            "predictor_replay": "all completed eligible selected-parent transitions in chronological order; no deduplication or relabeling",
+            "seed_derivation": "seed_material=SHA256 ASCII repr(initial selection RNG state); SHA256 ASCII offspring-value-imagenet-v1:{seed_material}:{initialize|update}:{generation}; first eight bytes big-endian masked to 63 bits; no RNG draws",
+            "target": "mean eight actual children under frozen classifier and selection-time previous-grid mean and nine fixed rank references",
+            "missing_targets": "first grid ineligible; final selection unobserved; max(S-2,0) targets",
         }
 
 

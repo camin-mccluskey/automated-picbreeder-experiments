@@ -5,7 +5,8 @@ mutates them, and how different selection strategies shape their evolution.
 Human and automated selection share the same nine-image breeding loop.
 
 Automated runs support uniform random selection, pixel novelty, novelty plus
-online predictability, predicted offspring value, greedy ImageNet selection and
+ImageNet confidence, novelty plus online predictability, predicted offspring value
+under either value function, greedy ImageNet selection and
 ImageNet selection with occasional random exploration. The notebooks support
 classifier inspection, comparison of selection strategies and interventions on
 saved networks. Representation assessment and a frozen scientific protocol remain
@@ -121,6 +122,9 @@ uv run python experiments/run_selection.py --selection-strategy random --steps 1
 # Pixel distance from the previous generation's mean; no Torch required.
 uv run python experiments/run_selection.py --selection-strategy novelty --steps 100 --seed 7
 
+# Balance pixel novelty with frozen ImageNet classification confidence.
+uv run --extra imagenet python experiments/run_selection.py --selection-strategy novelty-imagenet --comprehension-weight 0.5 --steps 100 --seed 7
+
 # Greedy selection by maximum ImageNet class probability.
 uv run --extra imagenet python experiments/run_selection.py --selection-strategy imagenet --steps 100 --seed 7
 
@@ -134,6 +138,9 @@ uv run --extra imagenet python experiments/run_selection.py --selection-strategy
 # Add online prediction of the selected parent's offspring value.
 uv run --extra imagenet python experiments/run_selection.py --selection-strategy offspring-value --gamma 1 --steps 14 --seed 7
 
+# Predict offspring value using novelty plus frozen ImageNet confidence.
+uv run --extra imagenet python experiments/run_selection.py --selection-strategy offspring-value-imagenet --gamma 1 --steps 14 --seed 7
+
 uv run python experiments/run_selection.py --help
 ```
 
@@ -146,9 +153,11 @@ uses the same `BreedingSession`, rendering and mutation code.
 | --- | --- |
 | `RandomSelectionStrategy()` | Uniform choice from all nine candidates, including the retained parent; no inference or scores |
 | `NoveltySelectionStrategy()` | Uniform first choice, then greatest mean squared pixel distance from the previous grid's mean image |
+| `NoveltyImageNetSelectionStrategy()` | Combine novelty rank and frozen maximum ImageNet class-confidence rank; confidence available immediately |
 | `NoveltyPredictabilitySelectionStrategy(observer_initialization="random")` | Combine novelty rank with pre-update masked-pixel accuracy rank; train ResNet18 online after each choice |
 | `NoveltyPredictabilitySelectionStrategy(observer_initialization="imagenet")` | Same architecture, head and training; start the backbone from pretrained ImageNet weights |
 | `OffspringValueSelectionStrategy()` | Add predicted mean offspring value to current-image value after warm-up; train on actual selected-parent transitions |
+| `OffspringValueImageNetSelectionStrategy()` | Same offspring prediction and selection, using novelty plus frozen ImageNet confidence as the value function |
 | `ImageNetSelectionStrategy()` | Score each candidate by its highest probability across all 1,000 classes and choose the first maximum |
 | `ImageNetSelectionStrategy(epsilon=0.1)` | With probability 0.1 choose uniformly; otherwise use the same greedy ImageNet rule |
 
@@ -176,6 +185,36 @@ advances its reference, including notebook previews. Import it from
 `automated_picbreeder.selection_strategies` and pass it to the same runner shown
 below. [Notebook 05](notebooks/05_novelty_predictability.ipynb) shows synthetic
 examples, reference means, a short CPPN run and matched observer predictions.
+
+### Novelty plus ImageNet confidence
+
+`NoveltyImageNetSelectionStrategy(comprehension_weight=0.5, evaluator=None)` uses
+the same pixel novelty reference and the same frozen classifier as ImageNet
+selection. It scores each candidate as `(1-weight)*novelty_rank + weight*confidence_rank`,
+where confidence is its maximum class probability. Both ranks use average ties
+within the current grid. Ranking discards the magnitude of differences: a small
+confidence gap can affect selection as much as a large one.
+
+The first grid has neutral novelty ranks and available classifier confidence.
+Positive weights therefore choose by confidence immediately; weight zero makes
+the first choice uniform. Later choices take the first maximum combined score.
+Weight zero matches pure novelty choices; weight one matches greedy ImageNet
+choices. There is no training, replay dataset or comprehension warm-up.
+
+Pass a configured `ImageNetEvaluator` to reuse a classifier or change its model.
+The CLI accepts `--comprehension-weight`, `--imagenet-model`, `--imagenet-weights`,
+`--imagenet-batch-size`, `--device` and `--cache-dir`. Observer, predictor, warm-up
+and epsilon options do not apply. Create a fresh strategy for each run to reset
+its novelty reference; the frozen evaluator can be shared.
+
+Each decision records `pixel_novelty` and `imagenet_confidence`, both ranks, and
+the full classifier values, class names and provenance in
+`evaluation.metadata.classifier_evaluation`. All nine candidates are classified
+on every decision, even at weight zero: `9*S` classifier evaluations for `S`
+decisions. Novelty uses full-resolution pixels while the classifier uses its
+checkpoint's preprocessing, including the default centre crop. Classification
+confidence replaces patch predictability as the proposed comprehension proxy;
+it is not a validated measure of comprehension or recognisability.
 
 ### Novelty plus predictability
 
@@ -294,6 +333,62 @@ The two comparison forecasts use the past target mean and current parent value.
 Only selected parents reveal outcomes, so these errors cannot establish that
 rejected alternatives were ranked correctly. Improved training loss alone is not
 evidence of useful selection.
+
+### Predict offspring value with ImageNet confidence
+
+`OffspringValueImageNetSelectionStrategy` uses the same delayed-target, predictor
+training and selection machinery as `OffspringValueSelectionStrategy`. Its current
+value comes from `NoveltyImageNetSelectionStrategy`: a weighted sum of pixel
+novelty rank and maximum ImageNet class-confidence rank. After predictor warm-up,
+selection uses `current_value + gamma * predicted_mean_offspring_value`, without
+reranking forecasts. Defaults remain `comprehension_weight=0.5`, `gamma=1`, ten
+completed targets, ten predictor updates per target, batch size 16 and learning
+rate 0.001.
+
+The ImageNet classifier stays frozen. Only the offspring predictor trains; there
+is no patch observer or comprehension warm-up. The predictor receives the same
+parent RGB and previous-grid mean images, plus 21 context scalars: raw novelty,
+confidence, current value, and the two sorted nine-candidate measurement vectors.
+The patch version retains its 23 inputs, including two observer training-history
+statistics. Predictor seeds are derived from the initial supplied selection RNG
+state without consuming selection draws.
+
+Each selected parent's target keeps its selection-time previous-grid mean and
+nine novelty/confidence rank references. On the next grid, the eight actual
+children are scored against those fixed references and averaged, excluding the
+retained parent and counting duplicate children individually. The current grid's
+classifier output supplies their confidence values, so no extra inference or
+offspring generation is needed: all nine candidates are classified exactly once
+per decision, for `9*S` classifier evaluations. Every eligible transition remains
+in predictor replay, including repeated parents.
+
+The first choice follows novelty-imagenet immediately, but that first parent's
+transition is ineligible because no previous-grid novelty reference exists.
+The final parent has no observed children. There are `max(S-2, 0)` completed targets:
+decision 2 selects the first eligible parent, decision 3 receives the first target,
+and decision 12 receives the tenth target and can first use forecasts with default
+settings. `--gamma 0` still trains and logs, while exactly preserving matching
+novelty-imagenet choices and selection RNG use.
+
+```sh
+uv run --extra imagenet python experiments/run_selection.py \
+  --selection-strategy offspring-value-imagenet --comprehension-weight 0.5 \
+  --gamma 1 --warmup-targets 10 --steps 14 --seed 7 --device cpu
+```
+
+The CLI accepts the ImageNet model/checkpoint/batch/cache options and all offspring
+predictor options. `--device` applies to both models and supports CPU or MPS;
+the predictor does not support CUDA. Patch-observer options, including
+`--comprehension-warmup-steps`, and epsilon are rejected. Python callers can pass
+an `evaluator=ImageNetEvaluator(...)`; `device` on the strategy configures the
+predictor, while the evaluator owns its classifier device.
+
+Records preserve full classifier outputs and provenance, current values, original
+forecasts, fixed target references, realised child values, forecast errors,
+predictor seeds, hashes and training records. Use a fresh strategy for each run
+and chronological nine-image grids with the retained parent first. As with the
+patch version, saved genome links establish ancestry; matching pixels alone
+cannot. Forecast errors describe selected parents, not rejected alternatives.
 
 ### Configure experiments in Python or notebooks
 

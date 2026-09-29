@@ -36,6 +36,31 @@ The implemented runner uses the same candidate-generation and selection opportun
 
 Use the same shared breeding implementation for the notebook and automated runner, with matched initialization, rendering and mutation settings. The runner makes selection decisions only: it does not exercise the notebook's optional backtracking or reset controls. In the greedy condition, exact score ties retain the parent, and a fixed deterministic scoring function cannot select a lower-scoring image. Exploratory choices can. A finite sequence of selections is one run; its length includes the initial random-grid choice. The runner uses a separate, recorded selection RNG seed so exploration draws do not alter mutation draws.
 
+`NoveltyImageNetSelectionStrategy(comprehension_weight=0.5)` combines the existing
+previous-grid pixel novelty rank with the frozen maximum class-confidence rank.
+It selects the first maximum of `(1-weight)*novelty_rank + weight*confidence_rank`.
+Confidence is available on the first grid, when novelty ranks are neutral; weight
+zero instead preserves novelty's uniform first choice. Weight zero matches novelty
+choices and weight one matches greedy ImageNet choices. No classifier training or
+warm-up occurs. Every candidate is classified, including at weight zero; records
+preserve both raw measurements, both ranks and the full classifier evaluation.
+This tests classification confidence as an alternative to patch predictability,
+not as a validated comprehension measure. Intermediate weights can select a lower
+confidence image in exchange for higher novelty.
+
+`OffspringValueImageNetSelectionStrategy` extends that value function with the
+same predicted-mean-offspring term as the patch-based offspring strategy. It
+trains a separate scratch predictor on actual selected-parent transitions, using
+the parent's selection-time novelty mean and nine novelty/confidence references
+to score its eight children. The classifier remains frozen; current-grid
+confidence measurements also supply the child targets. The first transition is
+ineligible because its parent was selected without a novelty reference; the last
+parent has no observed children. With `S` decisions there are `max(S-2, 0)` targets
+and `9*S` classifier evaluations. After ten completed targets by default, select
+using `current_value + gamma * predicted_mean_offspring_value`. Gamma zero trains
+and logs while preserving novelty-imagenet choices. This is an implemented
+experimental condition, not evidence of improved offspring value or UFR.
+
 ImageNet selection uses class confidence as a candidate proxy for recognisability/human preference, not a validated measure of naturalness or interestingness. The random condition has no such preference. These implemented conditions do not use a vision-language model (VLM) or an image-reconstruction objective.
 
 Both human and automated experiments now use three mutable CPPN outputs ordered hue, saturation and brightness (HSB/HSV), converted by the shared renderer to RGB using Picbreeder-VLM’s mapping: hue wraps modulo one, saturation clips to [0, 1], and brightness takes its absolute value then clips to [0, 1]. RGB bytes use half-up rounding. Coordinates, mutation rates, mutation strength and the parent-plus-eight-offspring loop are unchanged. This adopts HSB colour semantics without Picbreeder-VLM’s custom reproduction or colour/brightness subnetworks. Earlier experimental rendering conventions are not supported. Activation-function definitions remain those of our NEAT-Python configuration, without Picbreeder-VLM’s extra output transforms.

@@ -10,15 +10,18 @@ from unittest.mock import Mock
 import pytest
 
 from automated_picbreeder.experiment import ExperimentSettings
-from automated_picbreeder.selection_strategies import ImageNetSelectionStrategy, RandomSelectionStrategy
+from automated_picbreeder.selection_strategies import (
+    ImageNetSelectionStrategy, NoveltyImageNetSelectionStrategy, RandomSelectionStrategy,
+    OffspringValueImageNetSelectionStrategy,
+)
 
 
 CLI = Path(__file__).resolve().parents[1] / "experiments" / "run_selection.py"
 
 
-@pytest.mark.parametrize("name,epsilon", [("random", None), ("novelty", None), ("novelty-predictability", None), ("offspring-value", None), ("imagenet", None), ("imagenet", .2)])
+@pytest.mark.parametrize("name,epsilon", [("random", None), ("novelty", None), ("novelty-imagenet", None), ("novelty-predictability", None), ("offspring-value", None), ("offspring-value-imagenet", None), ("imagenet", None), ("imagenet", .2)])
 def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path, monkeypatch, name, epsilon):
-    if name in ("novelty-predictability", "offspring-value"):
+    if name in ("novelty-predictability", "offspring-value", "offspring-value-imagenet"):
         pytest.importorskip("torch")
     main = runpy.run_path(str(CLI))["main"]
     runner = Mock(return_value={"decisions": 100})
@@ -47,13 +50,46 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
         assert strategy.observer.model is None
         factory.assert_not_called()
     else:
-        assert isinstance(strategy, ImageNetSelectionStrategy)
-        assert strategy.epsilon == (epsilon or 0)
+        if name == "offspring-value-imagenet":
+            assert isinstance(strategy, OffspringValueImageNetSelectionStrategy)
+            assert strategy.comprehension_weight == .5
+            assert strategy.gamma == 1
+            assert strategy.warmup_targets == 10
+            assert strategy.predictor.model is None
+        elif name == "novelty-imagenet":
+            assert isinstance(strategy, NoveltyImageNetSelectionStrategy)
+            assert strategy.comprehension_weight == .5
+        else:
+            assert isinstance(strategy, ImageNetSelectionStrategy)
+            assert strategy.epsilon == (epsilon or 0)
         assert strategy.evaluator is factory.return_value
         assert factory.call_args.kwargs["device"] == "cpu"
 
 
 @pytest.mark.parametrize("args", [
+    ["--selection-strategy", "offspring-value-imagenet", "--epsilon", "0"],
+    ["--selection-strategy", "offspring-value-imagenet", "--observer-initialization", "imagenet"],
+    ["--selection-strategy", "offspring-value-imagenet", "--comprehension-warmup-steps", "0"],
+    ["--selection-strategy", "offspring-value-imagenet", "--training-steps", "1"],
+    ["--selection-strategy", "offspring-value-imagenet", "--observer-batch-size", "2"],
+    ["--selection-strategy", "offspring-value-imagenet", "--learning-rate", "0.01"],
+    ["--selection-strategy", "offspring-value-imagenet", "--gamma", "nan"],
+    ["--selection-strategy", "offspring-value-imagenet", "--warmup-targets", "0"],
+    ["--selection-strategy", "offspring-value-imagenet", "--predictor-training-steps", "0"],
+    ["--selection-strategy", "offspring-value-imagenet", "--predictor-batch-size", "0"],
+    ["--selection-strategy", "offspring-value-imagenet", "--predictor-learning-rate", "inf"],
+    ["--selection-strategy", "offspring-value-imagenet", "--comprehension-weight", "nan"],
+    ["--selection-strategy", "offspring-value-imagenet", "--device", "cuda"],
+    ["--selection-strategy", "novelty-imagenet", "--epsilon", "0"],
+    ["--selection-strategy", "novelty-imagenet", "--comprehension-weight", "nan"],
+    ["--selection-strategy", "novelty-imagenet", "--comprehension-weight", "1.1"],
+    ["--selection-strategy", "novelty-imagenet", "--comprehension-warmup-steps", "0"],
+    ["--selection-strategy", "novelty-imagenet", "--observer-initialization", "imagenet"],
+    ["--selection-strategy", "novelty-imagenet", "--training-steps", "1"],
+    ["--selection-strategy", "novelty-imagenet", "--gamma", "0"],
+    ["--selection-strategy", "novelty-imagenet", "--imagenet-weights", "DEFAULT"],
+    ["--selection-strategy", "novelty-imagenet", "--imagenet-batch-size", "0"],
+    ["--selection-strategy", "imagenet", "--comprehension-weight", "0.5"],
     ["--selection-strategy", "imagenet", "--imagenet-batch-size", "0"],
     ["--selection-strategy", "imagenet", "--imagenet-weights", "DEFAULT"],
     ["--selection-strategy", "random", "--cache-dir", "weights"],
@@ -159,22 +195,49 @@ def test_cli_forwards_all_observer_predictor_and_run_options(tmp_path, monkeypat
     )
 
 
-def test_cli_forwards_all_imagenet_options(tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", ["imagenet", "novelty-imagenet"])
+def test_cli_forwards_all_imagenet_options(tmp_path, monkeypatch, name):
     main = runpy.run_path(str(CLI))["main"]
     factory = Mock()
     runner = Mock(return_value={"decisions": 100})
     monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", factory)
     monkeypatch.setitem(main.__globals__, "run_experiment", runner)
     cache = tmp_path / "weights"
-    main(["--selection-strategy", "imagenet", "--epsilon", "0.25",
+    strategy_options = ["--epsilon", "0.25"] if name == "imagenet" else ["--comprehension-weight", "0.7"]
+    main(["--selection-strategy", name, *strategy_options,
           "--imagenet-model", "resnet50", "--imagenet-weights", "IMAGENET1K_V2",
           "--imagenet-batch-size", "3", "--device", "cuda", "--cache-dir", str(cache),
           "--output", str(tmp_path / "run")])
     factory.assert_called_once_with(model_name="resnet50", weights="IMAGENET1K_V2",
                                     batch_size=3, device="cuda", cache_dir=cache)
     strategy = runner.call_args.kwargs["selection_strategy"]
-    assert strategy.epsilon == .25
+    if name == "imagenet":
+        assert strategy.epsilon == .25
+    else:
+        assert strategy.comprehension_weight == .7
     assert strategy.evaluator is factory.return_value
+
+
+def test_cli_forwards_imagenet_offspring_options(tmp_path, monkeypatch):
+    main = runpy.run_path(str(CLI))["main"]
+    evaluator, strategy = Mock(), Mock()
+    runner = Mock(return_value={"decisions": 14})
+    monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", evaluator)
+    monkeypatch.setitem(main.__globals__, "OffspringValueImageNetSelectionStrategy", strategy)
+    monkeypatch.setitem(main.__globals__, "run_experiment", runner)
+    cache = tmp_path / "weights"
+    main(["--selection-strategy", "offspring-value-imagenet", "--comprehension-weight", "0.7",
+          "--gamma", "2", "--warmup-targets", "3", "--predictor-training-steps", "4",
+          "--predictor-batch-size", "5", "--predictor-learning-rate", "0.002",
+          "--imagenet-model", "resnet50", "--imagenet-weights", "IMAGENET1K_V2",
+          "--imagenet-batch-size", "3", "--device", "mps", "--cache-dir", str(cache),
+          "--output", str(tmp_path / "run"), "--steps", "14"])
+    evaluator.assert_called_once_with(model_name="resnet50", weights="IMAGENET1K_V2",
+                                     batch_size=3, device="mps", cache_dir=cache)
+    strategy.assert_called_once_with(comprehension_weight=.7, gamma=2, warmup_targets=3,
+        predictor_training_steps=4, predictor_batch_size=5, predictor_learning_rate=.002,
+        device="mps", evaluator=evaluator.return_value)
+    assert runner.call_args.kwargs['selection_strategy'] is strategy.return_value
 
 
 def test_invalid_imagenet_configuration_is_reported_as_cli_error(tmp_path, monkeypatch, capsys):

@@ -8,7 +8,7 @@ from torch import nn
 
 
 class _ValueNetwork(nn.Module):
-    def __init__(self):
+    def __init__(self, context_size):
         super().__init__()
         self.features = nn.Sequential(
             nn.Conv2d(6, 16, 3, stride=2, padding=1), nn.ReLU(),
@@ -16,14 +16,16 @@ class _ValueNetwork(nn.Module):
             nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(),
             nn.AdaptiveAvgPool2d(1), nn.Flatten(),
         )
-        self.head = nn.Sequential(nn.Linear(87, 64), nn.ReLU(), nn.Linear(64, 1), nn.Sigmoid())
+        self.head = nn.Sequential(nn.Linear(64 + context_size, 64), nn.ReLU(), nn.Linear(64, 1), nn.Sigmoid())
 
     def forward(self, pixels, context):
         return self.head(torch.cat((self.features(pixels), context), dim=1)).flatten()
 
 
 class OffspringValuePredictor:
-    def __init__(self, *, learning_rate=.001, device='cpu'):
+    def __init__(self, *, learning_rate=.001, device='cpu', value_source='predictability'):
+        if value_source not in ('predictability', 'imagenet'):
+            raise ValueError('Predictor value_source must be predictability or imagenet.')
         if device not in ('cpu', 'mps'):
             raise ValueError('Predictor device must be cpu or mps.')
         if device == 'mps' and not torch.backends.mps.is_available():
@@ -31,6 +33,8 @@ class OffspringValuePredictor:
         if not np.isfinite(learning_rate) or learning_rate <= 0:
             raise ValueError('Predictor learning rate must be positive and finite.')
         self.device, self.learning_rate = device, float(learning_rate)
+        self.value_source = value_source
+        self.context_size = 23 if value_source == 'predictability' else 21
         self.model = self.optimizer = None
 
     def initialize(self, seed):
@@ -38,17 +42,20 @@ class OffspringValuePredictor:
             raise RuntimeError('Use a fresh predictor for each run.')
         with torch.random.fork_rng(devices=[]):
             torch.random.default_generator.manual_seed(seed)
-            model = _ValueNetwork()
+            model = _ValueNetwork(self.context_size)
         self.model = model.to(self.device).eval()
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
 
     def describe(self):
+        quality = 'comprehension' if self.value_source == 'predictability' else 'imagenet_confidence'
+        context = ['raw_novelty', quality, 'current_value', 'sorted_novelty_9', f'sorted_{quality}_9']
+        if self.value_source == 'predictability':
+            context += ['log1p_observer_updates', 'log1p_observer_replay_size']
         return {
             'predictor': 'offspring_mean_value', 'version': 1, 'device': self.device,
-            'architecture': 'Conv3x3 stride2 pad1: 6->16->32->64 with ReLU; global mean; concatenate 23 scalars; 87->64 ReLU->1 sigmoid',
+            'architecture': f'Conv3x3 stride2 pad1: 6->16->32->64 with ReLU; global mean; concatenate {self.context_size} scalars; {64+self.context_size}->64 ReLU->1 sigmoid',
             'inputs': 'full-resolution parent RGB/255 and previous-grid RGB mean, six channels; float32',
-            'context': ['raw_novelty', 'comprehension', 'current_value', 'sorted_novelty_9',
-                        'sorted_comprehension_9', 'log1p_observer_updates', 'log1p_observer_replay_size'],
+            'context': context,
             'initialization': 'scratch, CPU, run-derived seed',
             'optimizer': {'name': 'Adam', 'lr': self.learning_rate, 'betas': [.9,.999], 'eps': 1e-8, 'weight_decay': 0},
             'loss': 'MSE against realised mean value of eight actual children',
@@ -56,12 +63,11 @@ class OffspringValuePredictor:
             'torch_version': version('torch'), 'torch_threads': torch.get_num_threads(),
         }
 
-    @staticmethod
-    def prepare(images, reference_mean, contexts):
+    def prepare(self, images, reference_mean, contexts):
         mean = np.asarray(reference_mean, dtype=np.float32).transpose(2, 0, 1)
         contexts = np.asarray(contexts, dtype=np.float32)
-        if contexts.shape != (len(images), 23) or not np.isfinite(contexts).all():
-            raise ValueError('Expected 23 finite context values per parent.')
+        if contexts.shape != (len(images), self.context_size) or not np.isfinite(contexts).all():
+            raise ValueError(f'Expected {self.context_size} finite context values per parent.')
         result = []
         for image, context in zip(images, contexts, strict=True):
             pixels = np.asarray(image, dtype=np.float32).transpose(2, 0, 1)/255

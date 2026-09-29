@@ -11,8 +11,9 @@ Read [docs/experiment-brief.md](docs/experiment-brief.md) for the scientific obj
 ## Current experiment
 
 - Begin with nine random CPPNs. Select one parent, retain it unchanged in the first position, and generate eight independently mutated offspring. Repeat.
-- Human selection happens in the notebook. Automated runs accept one `SelectionStrategy`: random, pixel novelty, novelty-predictability, offspring-value or ImageNet.
+- Human selection happens in the notebook. Automated runs accept one `SelectionStrategy`: random, pixel novelty, novelty-imagenet, novelty-predictability, offspring-value, offspring-value-imagenet or ImageNet.
 - Novelty selects uniformly on the first grid, then maximizes full-resolution pixel MSE from the previous displayed grid's mean image. All previous candidates contribute equally, including duplicates. It records raw distance and percentile-rank scores, requires no Torch, and retains state: construct a fresh instance for each run/inspection.
+- `NoveltyImageNetSelectionStrategy` combines the same novelty ranks with frozen maximum ImageNet class-confidence ranks, using `comprehension_weight=0.5` by default. The first grid has neutral novelty; positive weights choose by confidence immediately, while weight zero preserves novelty's random first choice. No training or warm-up. Weight one matches greedy ImageNet choices. Classify all nine images every decision, including at weight zero. Store two measurements plus both ranks and full classifier output/provenance in `evaluation.metadata.classifier_evaluation`. Create a fresh strategy per run.
 - `NoveltyPredictabilitySelectionStrategy` combines novelty and masked-pixel accuracy ranks. Random/pretrained ResNet18 observers share architecture and head initialization, train online on all distinct displayed images after the choice, and run on CPU by default or MPS explicitly. Initialization and sampling remain on CPU. First-grid comprehension is unavailable. The existing RNG supplies model/update seeds; evaluation metadata carries replay/training records and model hashes. These are not resumable model checkpoints.
 - Random selection is uniform over all nine candidates, including the parent, and performs no inference. ImageNet selection scores each candidate by its maximum class probability and chooses the first maximum, except that with probability epsilon it chooses uniformly instead. Classes may change; greedy ties retain the parent after initialization. Epsilon is in [0, 1], with 0 greedy and 1 always random but still evaluated.
 - Both paths use the same breeding and rendering code. When comparing selection strategies, match seeds, image sizes, mutation settings and decision budgets; report classifier cost separately. Human backtracking, resets or parameter adjustments introduce additional differences. Matching seeds does not keep choice sets identical after selections diverge.
@@ -44,6 +45,19 @@ max(S-max(W,1)-1,0) eligible targets; the first grid and warm-up parents are
 ineligible and the final parent unobserved. Do not generate extra offspring or
 invent rejected-parent labels. CPU/MPS replay is tested within one environment.
 
+`OffspringValueImageNetSelectionStrategy` shares the offspring loop, predictor and
+fixed-reference target calculations, using novelty-imagenet current values.
+Only its offspring predictor trains; no patch observer or comprehension warm-up.
+Keep the selection-time previous-grid mean and nine novelty/confidence references
+for scoring the eight actual children. Reuse confidence from the next grid's one
+classifier pass; all nine images are classified once per decision, including at
+gamma zero. Gamma zero must preserve novelty-imagenet choices and selection RNG
+use. Derive predictor seeds from a hash of the initial supplied RNG state without
+drawing from it. Predictor context has 21 scalars (the patch version retains its
+23, including observer training statistics). First transition ineligible, final
+parent unobserved: max(S-2,0) targets. Ten targets precede forecast-driven selection
+by default, so decision 12 can first use forecasts. CPU/MPS predictor only.
+
 ## Code structure
 
 Paths below are relative to the repository root. Core modules live in `src/automated_picbreeder/`.
@@ -57,8 +71,8 @@ Paths below are relative to the repository root. Core modules live in `src/autom
 | `imagenet.py` | Optional frozen Torchvision classifier adapter and preprocessing provenance |
 | `image_predictability.py` | Optional CPU/MPS masked ResNet18 observer, initialization, scoring, training and inference-only snapshots |
 | `offspring_prediction.py` | Optional CPU/MPS scalar predictor, full-resolution image/context inputs and transition updates |
-| `offspring_value.py` | Frozen selection-time offspring value target and fixed-reference ranks |
-| `selection_strategies.py` | `SelectionStrategy`, `SelectionDecision`, random, novelty, novelty-predictability, offspring-value and ImageNet selection |
+| `offspring_value.py` | Shared fixed-reference targets for frozen patch observers or already measured ImageNet confidence |
+| `selection_strategies.py` | `SelectionStrategy`, `SelectionDecision`, random, novelty, novelty-imagenet, novelty-predictability, offspring-value, offspring-value-imagenet and ImageNet selection |
 | `experiment.py` | Automated loop, settings, independent selection RNG, counters and checkpoints |
 | `experiment_reporting.py` | Contact sheets and progress, using recorded decisions and optional scores |
 | `persistence.py` | `SessionWriter`: common assembly and saving of run data for both interfaces |
@@ -105,7 +119,7 @@ uv run --extra imagenet python experiments/run_selection.py --selection-strategy
 uv run --extra imagenet pytest
 ```
 
-The ImageNet extra is optional for human, pure random and novelty selection. Include `--extra imagenet` in uv commands that need Torch. Classifier unit tests use controlled models and do not download weights; a real classifier smoke run may download the checkpoint into `.cache/imagenet`. Run all automated experiments through `experiments/run_selection.py`. CLI help lists all options; epsilon is only valid for ImageNet selection; device applies to ImageNet, novelty-predictability and offspring-value. `--imagenet-model`, `--imagenet-weights` and `--imagenet-batch-size` configure the frozen ImageNet evaluator; `--cache-dir` sets model weight storage. Predictor options apply only to offspring-value; it uses a scratch observer. Observer devices are cpu/mps; use --device mps on Apple Silicon.
+The ImageNet extra is optional for human, pure random and novelty selection. Include `--extra imagenet` in uv commands that need Torch. Classifier unit tests use controlled models and do not download weights; a real classifier smoke run may download the checkpoint into `.cache/imagenet`. Run all automated experiments through `experiments/run_selection.py`. CLI help lists all options; epsilon is only valid for ImageNet selection; device applies to strategies using a model. `--imagenet-model`, `--imagenet-weights` and `--imagenet-batch-size` configure the frozen evaluator for imagenet, novelty-imagenet and offspring-value-imagenet; `--cache-dir` sets model weight storage. `--comprehension-weight` applies to all combined novelty strategies. Predictor options apply to offspring-value and offspring-value-imagenet. Observer training/warm-up options apply only to novelty-predictability and offspring-value; the latter requires a scratch observer. Observer/predictor devices are cpu/mps; use --device mps on Apple Silicon. For offspring-value-imagenet, CLI device configures both classifier and predictor; Python strategy device configures the predictor, with classifier device supplied through its evaluator.
 
 For changes affecting breeding, rendering or saving, check deterministic replay between human and automated paths, unchanged parents, output mapping, complete records and saved-image reproduction. Preserve the user's notebook seeds and exploratory settings unless the requested change requires otherwise. Check actual notebook/CLI settings rather than assuming they match.
 
