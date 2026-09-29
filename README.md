@@ -117,31 +117,32 @@ Run each strategy/seed configuration with a new output directory. From the repos
 
 ```sh
 # Uniform random selection; no Torch or classifier required.
-uv run python experiments/run_selection.py --selection-strategy random --steps 100 --seed 7
+uv run python experiments/run_selection.py random --steps 100 --seed 7
 
 # Pixel distance from the previous generation's mean; no Torch required.
-uv run python experiments/run_selection.py --selection-strategy novelty --steps 100 --seed 7
+uv run python experiments/run_selection.py novelty --steps 100 --seed 7
 
 # Balance pixel novelty with frozen ImageNet classification confidence.
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy novelty-imagenet --comprehension-weight 0.5 --steps 100 --seed 7
+uv run --extra imagenet python experiments/run_selection.py novelty-imagenet --comprehension-weight 0.5 --steps 100 --seed 7
 
 # Greedy selection by maximum ImageNet class probability.
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy imagenet --steps 100 --seed 7
+uv run --extra imagenet python experiments/run_selection.py imagenet --steps 100 --seed 7
 
 # ImageNet selection with a 10% probability of a random choice each decision.
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy imagenet --epsilon 0.1 --steps 100 --seed 7
+uv run --extra imagenet python experiments/run_selection.py imagenet --epsilon 0.1 --steps 100 --seed 7
 
 # Balance novelty with predictability from an online masked-image observer.
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy novelty-predictability --observer-initialization random --steps 3 --seed 7
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy novelty-predictability --observer-initialization imagenet --steps 3 --seed 7
+uv run --extra imagenet python experiments/run_selection.py novelty-predictability --observer-initialization random --steps 3 --seed 7
+uv run --extra imagenet python experiments/run_selection.py novelty-predictability --observer-initialization imagenet --steps 3 --seed 7
 
 # Add online prediction of the selected parent's offspring value.
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy offspring-value --gamma 1 --steps 14 --seed 7
+uv run --extra imagenet python experiments/run_selection.py offspring-value --gamma 1 --steps 14 --seed 7
 
 # Predict offspring value using novelty plus frozen ImageNet confidence.
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy offspring-value-imagenet --gamma 1 --steps 14 --seed 7
+uv run --extra imagenet python experiments/run_selection.py offspring-value-imagenet --gamma 1 --steps 14 --seed 7
 
 uv run python experiments/run_selection.py --help
+uv run python experiments/run_selection.py offspring-value-imagenet --help
 ```
 
 The runner starts with nine random CPPNs, asks the selection strategy to choose
@@ -283,7 +284,7 @@ Run a short inspection with Apple GPU access:
 
 ```sh
 uv run --extra imagenet python experiments/run_selection.py \
-  --selection-strategy offspring-value --gamma 1 --device mps \
+  offspring-value --gamma 1 --device mps \
   --steps 23 --seed 7 --size 96 --output runs/my-offspring-inspection
 ```
 
@@ -372,7 +373,7 @@ novelty-imagenet choices and selection RNG use.
 
 ```sh
 uv run --extra imagenet python experiments/run_selection.py \
-  --selection-strategy offspring-value-imagenet --comprehension-weight 0.5 \
+  offspring-value-imagenet --comprehension-weight 0.5 \
   --gamma 1 --warmup-targets 10 --steps 14 --seed 7 --device cpu
 ```
 
@@ -432,10 +433,10 @@ Evaluators remain available for standalone inspection, but are not runner argume
 
 CLI and Python defaults match: 100 decisions, seed 7, image size 96, mutation
 strength 0.2, topology changes enabled and a checkpoint every 10 decisions.
-`--selection-strategy` is required. Other settings are `--size`,
-`--mutation-strength`, `--no-topology`, `--checkpoint-every`, `--selection-seed`
+The strategy subcommand is required and comes before all options. Other settings
+are `--size`, `--mutation-strength`, `--no-topology`, `--checkpoint-every`, `--selection-seed`
 and `--output`. `--epsilon` applies only to ImageNet selection. `--device` applies
-to ImageNet, novelty-predictability and offspring-value selection; all default to CPU.
+to all strategies using a model; all default to CPU.
 
 All strategy constructor settings and ImageNet evaluator settings are exposed:
 
@@ -443,12 +444,17 @@ All strategy constructor settings and ImageNet evaluator settings are exposed:
 | --- | --- |
 | All runs | `--steps 100`, `--seed 7`, `--selection-seed` (derived), `--size 96`, `--mutation-strength 0.2`, `--no-topology` (off), `--checkpoint-every 10`, `--output` (new timestamped directory) |
 | All model-based strategies | `--device cpu`, `--cache-dir` (repository `.cache/imagenet`) |
-| ImageNet | `--epsilon 0`, `--imagenet-model resnet18`, `--imagenet-weights IMAGENET1K_V1`, `--imagenet-batch-size 16` |
-| Novelty-predictability and offspring-value | `--comprehension-weight 0.5`, `--comprehension-warmup-steps 10`, `--observer-initialization random`, `--training-steps 20`, `--observer-batch-size 16`, `--learning-rate 0.001` |
-| Offspring-value | `--gamma 1`, `--warmup-targets 10`, `--predictor-training-steps 10`, `--predictor-batch-size 16`, `--predictor-learning-rate 0.001` |
+| ImageNet only | `--epsilon 0` |
+| ImageNet, novelty-imagenet and offspring-value-imagenet | `--imagenet-model resnet18`, `--imagenet-weights IMAGENET1K_V1`, `--imagenet-batch-size 16` |
+| All combined novelty strategies | `--comprehension-weight 0.5` |
+| Novelty-predictability and offspring-value | `--comprehension-warmup-steps 10`, `--observer-initialization random`, `--training-steps 20`, `--observer-batch-size 16`, `--learning-rate 0.001` |
+| Offspring-value and offspring-value-imagenet | `--gamma 1`, `--warmup-targets 10`, `--predictor-training-steps 10`, `--predictor-batch-size 16`, `--predictor-learning-rate 0.001` |
 
-Random and novelty have no strategy-specific settings. Options for an unrelated
-strategy are rejected. Observer initialization can be `random` or `imagenet` for
+Top-level `--help` lists strategies; `STRATEGY --help` shows only that strategy's
+options, grouped by purpose. Random and novelty have only run settings. Options
+for an unrelated strategy and abbreviated option names are rejected. The former
+`--selection-strategy NAME` syntax has been replaced by the `NAME` subcommand.
+Observer initialization can be `random` or `imagenet` for
 novelty-predictability; offspring-value requires `random`. Observers and predictors
 support CPU/MPS; the frozen ImageNet evaluator also supports CUDA. ImageNet model
 and weight options configure only the frozen classifier; observers use ResNet18.
@@ -641,7 +647,8 @@ transforms, custom mutation operators or colour/brightness subnetworks.
 - `src/automated_picbreeder/selection_strategies.py`: selection strategies and decision records.
 - `src/automated_picbreeder/experiment.py`: the shared automated runner and settings.
 - `src/automated_picbreeder/experiment_reporting.py`: saved grids and progress formatting.
-- `experiments/run_selection.py`: thin CLI for the same Python selection strategies.
+- `experiments/run_selection.py`: entry point for strategy subcommands.
+- `src/automated_picbreeder/selection_cli.py`: shared CLI option groups, strategy construction and dispatch. To add a strategy, define its configure function and register it in `COMMANDS`; keep model construction inside its builder.
 
 ```sh
 uv run pytest

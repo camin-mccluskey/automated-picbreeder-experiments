@@ -29,7 +29,7 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
     factory = Mock()
     monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", factory)
     output = tmp_path / "new"
-    args = ["--selection-strategy", name, "--output", str(output)]
+    args = [name, "--output", str(output)]
     if epsilon is not None:
         args += ["--epsilon", str(epsilon)]
     main(args)
@@ -67,66 +67,69 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
 
 
 @pytest.mark.parametrize("args", [
-    ["--selection-strategy", "offspring-value-imagenet", "--epsilon", "0"],
-    ["--selection-strategy", "offspring-value-imagenet", "--observer-initialization", "imagenet"],
-    ["--selection-strategy", "offspring-value-imagenet", "--comprehension-warmup-steps", "0"],
-    ["--selection-strategy", "offspring-value-imagenet", "--training-steps", "1"],
-    ["--selection-strategy", "offspring-value-imagenet", "--observer-batch-size", "2"],
-    ["--selection-strategy", "offspring-value-imagenet", "--learning-rate", "0.01"],
-    ["--selection-strategy", "offspring-value-imagenet", "--gamma", "nan"],
-    ["--selection-strategy", "offspring-value-imagenet", "--warmup-targets", "0"],
-    ["--selection-strategy", "offspring-value-imagenet", "--predictor-training-steps", "0"],
-    ["--selection-strategy", "offspring-value-imagenet", "--predictor-batch-size", "0"],
-    ["--selection-strategy", "offspring-value-imagenet", "--predictor-learning-rate", "inf"],
-    ["--selection-strategy", "offspring-value-imagenet", "--comprehension-weight", "nan"],
-    ["--selection-strategy", "offspring-value-imagenet", "--device", "cuda"],
-    ["--selection-strategy", "novelty-imagenet", "--epsilon", "0"],
-    ["--selection-strategy", "novelty-imagenet", "--comprehension-weight", "nan"],
-    ["--selection-strategy", "novelty-imagenet", "--comprehension-weight", "1.1"],
-    ["--selection-strategy", "novelty-imagenet", "--comprehension-warmup-steps", "0"],
-    ["--selection-strategy", "novelty-imagenet", "--observer-initialization", "imagenet"],
-    ["--selection-strategy", "novelty-imagenet", "--training-steps", "1"],
-    ["--selection-strategy", "novelty-imagenet", "--gamma", "0"],
-    ["--selection-strategy", "novelty-imagenet", "--imagenet-weights", "DEFAULT"],
-    ["--selection-strategy", "novelty-imagenet", "--imagenet-batch-size", "0"],
-    ["--selection-strategy", "imagenet", "--comprehension-weight", "0.5"],
-    ["--selection-strategy", "imagenet", "--imagenet-batch-size", "0"],
-    ["--selection-strategy", "imagenet", "--imagenet-weights", "DEFAULT"],
-    ["--selection-strategy", "random", "--cache-dir", "weights"],
-    ["--selection-strategy", "novelty", "--cache-dir", "weights"],
-    ["--selection-strategy", "novelty-predictability", "--imagenet-model", "resnet50"],
-    ["--selection-strategy", "offspring-value", "--imagenet-weights", "IMAGENET1K_V2"],
-    ["--selection-strategy", "random", "--imagenet-batch-size", "4"],
-    ["--selection-strategy", "offspring-value", "--gamma", "nan"],
-    ["--selection-strategy", "offspring-value", "--warmup-targets", "0"],
-    ["--selection-strategy", "offspring-value", "--predictor-training-steps", "0"],
-    ["--selection-strategy", "offspring-value", "--observer-initialization", "imagenet"],
-    ["--selection-strategy", "novelty-predictability", "--gamma", "1"],
-    ["--selection-strategy", "random", "--epsilon", "0"],
-    ["--selection-strategy", "random", "--device", "cpu"],
-    ["--selection-strategy", "novelty", "--epsilon", "0"],
-    ["--selection-strategy", "novelty", "--device", "cpu"],
-    ["--selection-strategy", "novelty", "--comprehension-weight", "0.5"],
-    ["--selection-strategy", "novelty-predictability", "--comprehension-weight", "nan"],
-    ["--selection-strategy", "novelty-predictability", "--observer-batch-size", "1"],
-    ["--selection-strategy", "novelty-predictability", "--training-steps", "0"],
-    ["--selection-strategy", "novelty-predictability", "--comprehension-warmup-steps", "-1"],
-    ["--selection-strategy", "offspring-value", "--comprehension-warmup-steps", "-1"],
-    ["--selection-strategy", "novelty", "--comprehension-warmup-steps", "10"],
-    ["--selection-strategy", "random", "--comprehension-warmup-steps", "10"],
-    ["--selection-strategy", "imagenet", "--comprehension-warmup-steps", "10"],
-    ["--selection-strategy", "novelty-predictability", "--epsilon", "0"],
-    ["--selection-strategy", "imagenet", "--epsilon", "-0.1"],
-    ["--selection-strategy", "imagenet", "--epsilon", "1.1"],
-    ["--selection-strategy", "imagenet", "--epsilon", "nan"],
-    ["--selection-strategy", "imagenet", "--steps", "0"],
-    ["--selection-strategy", "imagenet", "--size", "1"],
-    ["--selection-strategy", "imagenet", "--mutation-strength", "nan"],
+    ["offspring-value-imagenet", "--epsilon", "0"],
+    ["offspring-value-imagenet", "--observer-initialization", "imagenet"],
+    ["offspring-value-imagenet", "--comprehension-warmup-steps", "0"],
+    ["offspring-value-imagenet", "--training-steps", "1"],
+    ["offspring-value-imagenet", "--observer-batch-size", "2"],
+    ["offspring-value-imagenet", "--learning-rate", "0.01"],
+    ["offspring-value-imagenet", "--gamma", "nan"],
+    ["offspring-value-imagenet", "--warmup-targets", "0"],
+    ["offspring-value-imagenet", "--predictor-training-steps", "0"],
+    ["offspring-value-imagenet", "--predictor-batch-size", "0"],
+    ["offspring-value-imagenet", "--predictor-learning-rate", "inf"],
+    ["offspring-value-imagenet", "--comprehension-weight", "nan"],
+    ["offspring-value-imagenet", "--device", "cuda"],
+    ["novelty-imagenet", "--epsilon", "0"],
+    ["novelty-imagenet", "--comprehension-weight", "nan"],
+    ["novelty-imagenet", "--comprehension-weight", "1.1"],
+    ["novelty-imagenet", "--comprehension-warmup-steps", "0"],
+    ["novelty-imagenet", "--observer-initialization", "imagenet"],
+    ["novelty-imagenet", "--training-steps", "1"],
+    ["novelty-imagenet", "--gamma", "0"],
+    ["novelty-imagenet", "--imagenet-weights", "DEFAULT"],
+    ["novelty-imagenet", "--imagenet-batch-size", "0"],
+    ["imagenet", "--comprehension-weight", "0.5"],
+    ["imagenet", "--imagenet-batch-size", "0"],
+    ["imagenet", "--imagenet-weights", "DEFAULT"],
+    ["random", "--cache-dir", "weights"],
+    ["novelty", "--cache-dir", "weights"],
+    ["novelty-predictability", "--imagenet-model", "resnet50"],
+    ["offspring-value", "--imagenet-weights", "IMAGENET1K_V2"],
+    ["random", "--imagenet-batch-size", "4"],
+    ["offspring-value", "--gamma", "nan"],
+    ["offspring-value", "--warmup-targets", "0"],
+    ["offspring-value", "--predictor-training-steps", "0"],
+    ["offspring-value", "--observer-initialization", "imagenet"],
+    ["novelty-predictability", "--gamma", "1"],
+    ["random", "--epsilon", "0"],
+    ["random", "--device", "cpu"],
+    ["novelty", "--epsilon", "0"],
+    ["novelty", "--device", "cpu"],
+    ["novelty", "--comprehension-weight", "0.5"],
+    ["novelty-predictability", "--comprehension-weight", "nan"],
+    ["novelty-predictability", "--observer-batch-size", "1"],
+    ["novelty-predictability", "--training-steps", "0"],
+    ["novelty-predictability", "--comprehension-warmup-steps", "-1"],
+    ["offspring-value", "--comprehension-warmup-steps", "-1"],
+    ["novelty", "--comprehension-warmup-steps", "10"],
+    ["random", "--comprehension-warmup-steps", "10"],
+    ["imagenet", "--comprehension-warmup-steps", "10"],
+    ["novelty-predictability", "--epsilon", "0"],
+    ["imagenet", "--epsilon", "-0.1"],
+    ["imagenet", "--epsilon", "1.1"],
+    ["imagenet", "--epsilon", "nan"],
+    ["imagenet", "--steps", "0"],
+    ["imagenet", "--size", "1"],
+    ["imagenet", "--mutation-strength", "nan"],
 ])
 def test_invalid_cli_configuration_fails_before_model_or_output_creation(tmp_path, monkeypatch, args):
     main = runpy.run_path(str(CLI))["main"]
     factory = Mock(side_effect=AssertionError("Must not load a classifier"))
     monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", factory)
+    for name in ("NoveltyPredictabilitySelectionStrategy", "OffspringValueSelectionStrategy",
+                 "OffspringValueImageNetSelectionStrategy"):
+        monkeypatch.setitem(main.__globals__, name, factory)
     output = tmp_path / "new"
     with pytest.raises(SystemExit) as failure:
         main([*args, "--output", str(output)])
@@ -140,7 +143,7 @@ def test_existing_output_is_rejected_before_classifier_loading(tmp_path, monkeyp
     factory = Mock(side_effect=AssertionError("Must not load a classifier"))
     monkeypatch.setattr("automated_picbreeder.imagenet.ImageNetEvaluator", factory)
     with pytest.raises(SystemExit) as failure:
-        main(["--selection-strategy", "imagenet", "--output", str(tmp_path)])
+        main(["imagenet", "--output", str(tmp_path)])
     assert failure.value.code == 2
     assert list(tmp_path.iterdir()) == []
     factory.assert_not_called()
@@ -152,7 +155,7 @@ def test_observer_cli_passes_explicit_device(tmp_path, monkeypatch):
     runner = Mock(return_value={"decisions": 2})
     monkeypatch.setitem(main.__globals__, "NoveltyPredictabilitySelectionStrategy", factory)
     monkeypatch.setitem(main.__globals__, "run_experiment", runner)
-    main(["--selection-strategy", "novelty-predictability", "--device", "mps", "--output", str(tmp_path / "run")])
+    main(["novelty-predictability", "--device", "mps", "--output", str(tmp_path / "run")])
     assert factory.call_args.kwargs['device'] == 'mps'
     assert runner.call_args.kwargs['selection_strategy'] is factory.return_value
 
@@ -170,7 +173,7 @@ def test_cli_forwards_all_observer_predictor_and_run_options(tmp_path, monkeypat
     initialization = "imagenet" if name == "novelty-predictability" else "random"
     output, cache = tmp_path / "run", tmp_path / "weights"
     args = [
-        "--selection-strategy", name, "--output", str(output), "--cache-dir", str(cache),
+        name, "--output", str(output), "--cache-dir", str(cache),
         "--device", "mps", "--comprehension-weight", "0.7",
         "--comprehension-warmup-steps", "0",
         "--observer-initialization", initialization, "--training-steps", "3",
@@ -204,7 +207,7 @@ def test_cli_forwards_all_imagenet_options(tmp_path, monkeypatch, name):
     monkeypatch.setitem(main.__globals__, "run_experiment", runner)
     cache = tmp_path / "weights"
     strategy_options = ["--epsilon", "0.25"] if name == "imagenet" else ["--comprehension-weight", "0.7"]
-    main(["--selection-strategy", name, *strategy_options,
+    main([name, *strategy_options,
           "--imagenet-model", "resnet50", "--imagenet-weights", "IMAGENET1K_V2",
           "--imagenet-batch-size", "3", "--device", "cuda", "--cache-dir", str(cache),
           "--output", str(tmp_path / "run")])
@@ -226,7 +229,7 @@ def test_cli_forwards_imagenet_offspring_options(tmp_path, monkeypatch):
     monkeypatch.setitem(main.__globals__, "OffspringValueImageNetSelectionStrategy", strategy)
     monkeypatch.setitem(main.__globals__, "run_experiment", runner)
     cache = tmp_path / "weights"
-    main(["--selection-strategy", "offspring-value-imagenet", "--comprehension-weight", "0.7",
+    main(["offspring-value-imagenet", "--comprehension-weight", "0.7",
           "--gamma", "2", "--warmup-targets", "3", "--predictor-training-steps", "4",
           "--predictor-batch-size", "5", "--predictor-learning-rate", "0.002",
           "--imagenet-model", "resnet50", "--imagenet-weights", "IMAGENET1K_V2",
@@ -248,7 +251,7 @@ def test_invalid_imagenet_configuration_is_reported_as_cli_error(tmp_path, monke
     monkeypatch.setitem(main.__globals__, "run_experiment", runner)
     output = tmp_path / "run"
     with pytest.raises(SystemExit) as failure:
-        main(["--selection-strategy", "imagenet", "--imagenet-model", "invalid", "--output", str(output)])
+        main(["imagenet", "--imagenet-model", "invalid", "--output", str(output)])
     assert failure.value.code == 2
     assert "Unknown model 'invalid'" in capsys.readouterr().err
     assert not output.exists()
@@ -273,7 +276,7 @@ assert 'torch' not in sys.modules
 """
     output = tmp_path / strategy_name
     result = subprocess.run([
-        sys.executable, "-c", code, str(CLI), "--selection-strategy", strategy_name,
+        sys.executable, "-c", code, str(CLI), strategy_name,
         "--steps", "2", "--size", "8", "--selection-seed", "0", "--output", str(output),
     ], capture_output=True, text=True, check=True)
     assert "Saved 2 decisions" in result.stdout
@@ -284,6 +287,7 @@ assert 'torch' not in sys.modules
     assert len(list((output / "images").glob("*.png"))) == 17
     assert len(list((output / "grids").glob("*.png"))) == 2
     assert (output / "source/experiments/run_selection.py").is_file()
+    assert (output / "source/src/automated_picbreeder/selection_cli.py").is_file()
     assert not (output / "source/experiments/imagenet_selection.py").exists()
     decisions = [e for e in data["events"] if e["action"] == "select"]
     if strategy_name == "random":
@@ -291,3 +295,82 @@ assert 'torch' not in sys.modules
     else:
         assert [e["decision"]["mode"] for e in decisions] == ["random", "greedy"]
         assert all(e["evaluation"]["names"] == ["pixel_novelty"] for e in decisions)
+
+
+@pytest.mark.parametrize("name,expected,absent", [
+    ("random", ("Run settings:", "--steps"), ("--device", "--epsilon", "--gamma")),
+    ("imagenet", ("ImageNet classifier:", "--epsilon"), ("--gamma", "--training-steps")),
+    ("offspring-value-imagenet", ("Offspring predictor:", "--gamma", "--imagenet-model"),
+     ("--epsilon", "--observer-initialization", "--comprehension-warmup-steps")),
+])
+def test_strategy_help_lists_only_applicable_options(name, expected, absent, capsys):
+    main = runpy.run_path(str(CLI))["main"]
+    with pytest.raises(SystemExit) as result:
+        main([name, "--help"])
+    assert result.value.code == 0
+    help_text = capsys.readouterr().out
+    assert all(text in help_text for text in expected)
+    assert all(text not in help_text for text in absent)
+
+
+@pytest.mark.parametrize("args", [[], ["--selection-strategy", "random"],
+    ["unknown"], ["random", "--ste", "2"], ["imagenet", "--eps", "0.1"]])
+def test_requires_known_subcommand_and_full_option_names(args):
+    main = runpy.run_path(str(CLI))["main"]
+    with pytest.raises(SystemExit) as result:
+        main(args)
+    assert result.value.code == 2
+
+
+STRATEGIES = (
+    "random", "novelty", "imagenet", "novelty-imagenet", "novelty-predictability",
+    "offspring-value", "offspring-value-imagenet",
+)
+OPTION_FAMILIES = (
+    ("--epsilon", "0", {"imagenet"}),
+    ("--imagenet-model", "resnet18", {"imagenet", "novelty-imagenet", "offspring-value-imagenet"}),
+    ("--comprehension-weight", "0.5", {"novelty-imagenet", "novelty-predictability", "offspring-value", "offspring-value-imagenet"}),
+    ("--training-steps", "1", {"novelty-predictability", "offspring-value"}),
+    ("--gamma", "1", {"offspring-value", "offspring-value-imagenet"}),
+    ("--device", "cpu", set(STRATEGIES) - {"random", "novelty"}),
+)
+
+
+@pytest.mark.parametrize("name,flag,value", [
+    (name, flag, value) for name in STRATEGIES
+    for flag, value, supported in OPTION_FAMILIES if name not in supported
+])
+def test_unrelated_option_families_are_rejected_by_parser(name, flag, value, capsys):
+    from automated_picbreeder.selection_cli import build_parser
+
+    with pytest.raises(SystemExit) as result:
+        build_parser().parse_args([name, flag, value])
+    assert result.value.code == 2
+    assert f"unrecognized arguments: {flag}" in capsys.readouterr().err
+
+
+def test_all_help_works_without_torch_and_lists_strategies():
+    code = '''
+import builtins
+import runpy
+import sys
+original_import = builtins.__import__
+def without_torch(name, *args, **kwargs):
+    if name.split('.')[0] in {'torch', 'torchvision'}:
+        raise ImportError('Torch deliberately unavailable')
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_torch
+main = runpy.run_path(sys.argv[1])['main']
+for prefix in [[], *[[name] for name in sys.argv[2:]]]:
+    try:
+        main([*prefix, '--help'])
+    except SystemExit as result:
+        assert result.code == 0
+    else:
+        raise AssertionError('Help must exit')
+assert 'torch' not in sys.modules
+'''
+    result = subprocess.run([sys.executable, "-c", code, str(CLI), *STRATEGIES],
+                            capture_output=True, text=True, check=True)
+    top_level = result.stdout.split("Run settings:")[0]
+    assert all(name in top_level for name in STRATEGIES)

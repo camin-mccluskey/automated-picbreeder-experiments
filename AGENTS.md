@@ -76,7 +76,8 @@ Paths below are relative to the repository root. Core modules live in `src/autom
 | `experiment.py` | Automated loop, settings, independent selection RNG, counters and checkpoints |
 | `experiment_reporting.py` | Contact sheets and progress, using recorded decisions and optional scores |
 | `persistence.py` | `SessionWriter`: common assembly and saving of run data for both interfaces |
-| `experiments/run_selection.py` | Thin selection-strategy CLI; experiment entry points belong in `experiments/` |
+| `selection_cli.py` | Shared CLI option groups, strategy subcommands and builders; add a configure function and register it in `COMMANDS` |
+| `experiments/run_selection.py` | Thin selection-strategy CLI entry point; experiment entry points belong in `experiments/` |
 | `notebooks/01_cppn_selection.ipynb` | Human breeding, genome inspection and weight sweeps |
 | `notebooks/02_image_evaluation.ipynb` | Classifier inspection, selection-strategy comparison and a short run |
 | `notebooks/05_novelty_predictability.ipynb` | Pixel novelty distances/reference means and a short run |
@@ -114,12 +115,12 @@ Python 3.13+, managed with `uv`; dependencies are locked in `uv.lock`, with NEAT
 ```sh
 uv sync --locked --extra imagenet
 uv run jupyter lab notebooks/01_cppn_selection.ipynb
-uv run python experiments/run_selection.py --selection-strategy random --steps 3 --seed 7
-uv run --extra imagenet python experiments/run_selection.py --selection-strategy imagenet --epsilon 0.1 --steps 3 --seed 7
+uv run python experiments/run_selection.py random --steps 3 --seed 7
+uv run --extra imagenet python experiments/run_selection.py imagenet --epsilon 0.1 --steps 3 --seed 7
 uv run --extra imagenet pytest
 ```
 
-The ImageNet extra is optional for human, pure random and novelty selection. Include `--extra imagenet` in uv commands that need Torch. Classifier unit tests use controlled models and do not download weights; a real classifier smoke run may download the checkpoint into `.cache/imagenet`. Run all automated experiments through `experiments/run_selection.py`. CLI help lists all options; epsilon is only valid for ImageNet selection; device applies to strategies using a model. `--imagenet-model`, `--imagenet-weights` and `--imagenet-batch-size` configure the frozen evaluator for imagenet, novelty-imagenet and offspring-value-imagenet; `--cache-dir` sets model weight storage. `--comprehension-weight` applies to all combined novelty strategies. Predictor options apply to offspring-value and offspring-value-imagenet. Observer training/warm-up options apply only to novelty-predictability and offspring-value; the latter requires a scratch observer. Observer/predictor devices are cpu/mps; use --device mps on Apple Silicon. For offspring-value-imagenet, CLI device configures both classifier and predictor; Python strategy device configures the predictor, with classifier device supplied through its evaluator.
+The ImageNet extra is optional for human, pure random and novelty selection. Include `--extra imagenet` in uv commands that need Torch. Classifier unit tests use controlled models and do not download weights; a real classifier smoke run may download the checkpoint into `.cache/imagenet`. Run all automated experiments through `experiments/run_selection.py`. Put the strategy subcommand before all options. Top-level help lists strategies; `STRATEGY --help` lists only applicable options; epsilon is only valid for ImageNet selection; device applies to strategies using a model. `--imagenet-model`, `--imagenet-weights` and `--imagenet-batch-size` configure the frozen evaluator for imagenet, novelty-imagenet and offspring-value-imagenet; `--cache-dir` sets model weight storage. `--comprehension-weight` applies to all combined novelty strategies. Predictor options apply to offspring-value and offspring-value-imagenet. Observer training/warm-up options apply only to novelty-predictability and offspring-value; the latter requires a scratch observer. Observer/predictor devices are cpu/mps; use --device mps on Apple Silicon. For offspring-value-imagenet, CLI device configures both classifier and predictor; Python strategy device configures the predictor, with classifier device supplied through its evaluator.
 
 For changes affecting breeding, rendering or saving, check deterministic replay between human and automated paths, unchanged parents, output mapping, complete records and saved-image reproduction. Preserve the user's notebook seeds and exploratory settings unless the requested change requires otherwise. Check actual notebook/CLI settings rather than assuming they match.
 
