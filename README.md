@@ -3,8 +3,9 @@
 A small research project exploring how CPPNs generate images and how selection
 shapes their evolution. Human and automated runs share one loop: select one of
 nine images, retain its network unchanged, and generate eight mutated children.
-Representation assessment and a frozen scientific protocol remain unfinished;
-attractive images or high classifier scores are not evidence of UFR.
+The project provides breeding, image diagnostics and network inspection tools.
+It does not yet establish unified factored representations (UFR): independently
+controllable image properties and shared computation underlying repeated structure.
 
 ## Start
 
@@ -53,5 +54,8 @@ uv run python experiments/view_results.py runs/
 
 [Batch experiments and metrics](docs/batch-experiments.md) explains diagnostics,
 failures, human-session comparisons and sharing reports with their image folders.
-The [experiment brief](docs/experiment-brief.md) records the scientific objective;
-the [selection follow-up plan](PLAN.md) records the current changes and checks.
+The [experiment brief](docs/experiment-brief.md) explains the scientific objective
+and limits of the current tools.
+
+Project code is [MIT licensed](LICENSE). The bundled Picbreeder skull reference
+retains its [Apache-2.0 licence and attribution](src/automated_picbreeder/reference_data/skull/README.md).

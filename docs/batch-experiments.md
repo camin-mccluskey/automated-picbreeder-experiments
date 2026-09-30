@@ -1,13 +1,9 @@
 # Batch experiments, metrics and viewer
 
-This work has three phases:
-
-1. **Implemented:** run one strategy configuration across independent seeds and
-   save per-generation diagnostics, per-run summaries and batch statistics.
-2. **Implemented:** apply the same reporting standard to human notebook
-   sessions, distinguishing chronological exploration from final ancestry.
-3. **Implemented:** a static HTML viewer with linked charts, generation
-   navigation, full candidate grids and final-image galleries.
+Automated batches and human notebook sessions share per-selection diagnostics,
+run summaries and an offline viewer. Reports distinguish chronological exploration,
+display visits and final ancestry. Batch statistics give each completed run equal
+weight.
 
 There are no human ratings or overall interestingness scores. These measurements
 describe image changes, selection behaviour and computational cost; they do not
@@ -22,7 +18,7 @@ uv run --extra imagenet python experiments/run_selection.py offspring-value-imag
 
 All strategy options are the same as for a standalone run. Put the strategy name
 before the options. Omitting `--runs` keeps the standalone directory layout;
-`--runs 1` explicitly creates a one-run batch. Both now save metrics.
+`--runs 1` explicitly creates a one-run batch. Both save metrics.
 
 Runs execute sequentially with identical settings except seeds. Run index `i`
 uses `seed + i`. By default its selection seed is derived from that run's breeding
@@ -79,7 +75,7 @@ run-0000-seed7/
 
 `batch.json` contains each run's final selected-image path. `metrics.json` contains
 the selected image and nine ordered candidates for every generation, with paths
-relative to the run directory. This is sufficient for the later galleries without
+relative to the run directory. The viewer uses these paths without
 copying images or ranking different generations by incomparable internal scores.
 A failed run's image link, if present, is its last completed selection and remains
 labelled failed in the manifest.

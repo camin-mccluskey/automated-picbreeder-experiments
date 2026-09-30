@@ -75,5 +75,5 @@ simplicity/familiarity bias. The 96x96 observer avoids downsampling default CPPN
 renders, but increases compute/memory and uses larger hidden tiles; see the
 [resolution investigation and measured costs](../observer-resolution.md).
 Notebook 07 uses the same 96x96 observer and explicitly retains mean aggregation
-for its original target experiment. It inspects targets, ancestry and replay;
+to inspect average child value. It inspects targets, ancestry and replay;
 its shortened warm-up settings also differ from CLI defaults.

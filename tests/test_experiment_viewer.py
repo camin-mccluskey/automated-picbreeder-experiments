@@ -129,7 +129,8 @@ def test_viewer_javascript_interactions(tmp_path):
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required for the JavaScript DOM unit harness")
-    run_batch(strategy_factory=NoveltySelectionStrategy, output_dir=tmp_path / "batch", runs=2,
+    run_batch(strategy_factory=lambda: NoveltySelectionStrategy(novelty_reference="previous-parent"),
+              output_dir=tmp_path / "batch", runs=2,
               settings=ExperimentSettings(steps=3, size=4), progress=None)
     ui = CPPNPlayground(size=4, save_dir=tmp_path / "manual")
     ui.select(1)

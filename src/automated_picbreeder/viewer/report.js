@@ -221,7 +221,7 @@
       controls.append(prev,slider,next,output);app.append(controls);
       const inspector=node('div',null,'inspector'), visual=node('section',null,'visual-panel');visual.id='visual-panel';visual.setAttribute('aria-label','Selected image and candidate grid');
       const plots=node('section',null,'plots');plots.setAttribute('aria-label','Run metric charts');inspector.append(visual,plots);app.append(inspector);
-      groups.forEach(([title,keys,note])=>{if(title==='Display novelty' && rows().some(r=>'novelty_selected' in r.metrics))return;const chart=makeChart(title,keys,note);if(chart)plots.append(chart);});
+      groups.forEach(([title,keys,note])=>{if(title==='Display novelty' && report.selection_strategy.novelty_reference!=='previous-parent' && rows().some(r=>'novelty_selected' in r.metrics))return;const chart=makeChart(title,keys,note);if(chart)plots.append(chart);});
       const extra=node('div',null,'toolbar'), extraHost=node('div');extraHost.id='extra-chart';
       const metricKeys=Object.keys(report.summary.metrics).sort();
       const choice=selectControl([['','Additional metric…'],...metricKeys.map(k=>[k,label(k)])],'',key=>{

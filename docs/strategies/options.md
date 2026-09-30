@@ -19,8 +19,7 @@ Raw `pixel_novelty` is mean squared distance over pixels and RGB channels in
 [0, 1]. The initial grid has no reference. Novelty ranks are percentile ranks
 within the current grid; ties receive their average rank, with neutral rank 0.5
 when all candidates tie. Greedy score ties choose the first candidate, normally
-the retained parent. Neither mode compares against all history; historical
-novelty selection is deferred. Previously-seen flags do not penalize selection.
+the retained parent. Previously-seen flags do not penalize selection.
 
 The common derived metric `display_novelty` always compares with the previous
 displayed grid's mean, even when selection uses `previous-parent`.
@@ -111,7 +110,7 @@ maximum of `current_value + gamma * predicted_offspring_value`; forecasts are
 not reranked. Each fresh predictor learns the configured aggregation within its
 run. `max` forecasts the expected best value in an eight-child brood. It does not
 mean selecting the largest forecast alone or forecasting an individual child.
-`mean` forecasts average child value and preserves the former target definition.
+`mean` forecasts average child value.
 Target metadata stores the chosen value as `offspring_value`; separate
 `mean_offspring_value` and `max_offspring_value` fields retain their literal meanings.
 

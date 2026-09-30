@@ -1,8 +1,10 @@
 [project]
 name = "automated-picbreeder"
 version = "0.1.0"
-description = "Add your description here"
+description = "Human and automated selection of compositional pattern-producing networks"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/automated_picbreeder/reference_data/skull/LICENSE"]
 authors = [
     { name = "camin-mccluskey", email = "mccluskey.camin@gmail.com" }
 ]
@@ -15,9 +17,6 @@ dependencies = [
     "numpy>=2.2,<3",
     "pillow>=11,<13",
 ]
-
-[project.scripts]
-automated-picbreeder = "automated_picbreeder:main"
 
 [project.optional-dependencies]
 imagenet = [

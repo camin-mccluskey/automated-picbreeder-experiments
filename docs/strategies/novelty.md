@@ -23,6 +23,6 @@ Records include raw distances, percentile ranks, the reference, pixel hashes and
 previously-seen flags. Initial distances are unavailable and ranks neutral;
 flags do not affect the choice. Previous-parent mode gives the retained parent
 zero raw novelty, but it can still win if every candidate is identical.
-Historical nearest-image comparison is deferred. Notebook 05 inspects novelty
-and references. [Shared metrics](../batch-experiments.md#shared-measurements)
+Notebook 05 inspects novelty and references.
+[Shared metrics](../batch-experiments.md#shared-measurements)
 keep previous-grid `display_novelty` distinct from configurable strategy novelty.

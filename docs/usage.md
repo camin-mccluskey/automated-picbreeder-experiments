@@ -26,8 +26,7 @@ parent IDs, ordered displays and decisions, the configuration, package versions,
 and PNGs of every generated image to `runs/`, using the shared session format
 described below. The notebook shows how to render an
 exported genome again. Exports are inspectable records, not resumable evolution
-checkpoints or a finished human-choice data collection protocol. Sessions remain
-in memory until saved; save before restarting the kernel.
+checkpoints. Sessions remain in memory until saved; save before restarting the kernel.
 
 ## Small experiments
 
@@ -51,7 +50,8 @@ uv run --extra imagenet jupyter lab notebooks/02_image_evaluation.ipynb
 ```
 
 The `imagenet` extra keeps PyTorch optional for the original playground and for
-non-classifier experiments. Include `--extra imagenet` in `uv run` commands that
+random and pixel-novelty experiments. Observer and predictor strategies also
+require this extra. Include `--extra imagenet` in `uv run` commands that
 need it, so uv retains these optional dependencies in the environment.
 
 The notebook renders nine CPPNs, shows the classifier's top labels, inspects its
@@ -99,8 +99,8 @@ uint8 H×W or H×W×3 arrays; float ranges and other channel layouts are rejecte
 
 ImageNet is the training dataset/category set; ResNet-18 is the default classifier. Its
 scores are not validated naturalness, novelty or interestingness measures, and
-abstract CPPNs are outside its ordinary natural-image setting. This is an
-exploratory choice, not an exact Innovation Engine replication.
+abstract CPPNs are outside its ordinary natural-image setting. These scores are an
+exploratory selection signal.
 
 ### Configure experiments in Python or notebooks
 
@@ -151,11 +151,14 @@ version-2 `session.json` records:
   image paths/hashes, ordered displays, events, selection, metadata and summary.
 - `images/<8-digit-genome-id>.png`: every generated candidate, including rejected
   alternatives and discarded branches.
-- `cppn.cfg`, `source/`: configuration and a hashed implementation/lockfile snapshot.
+- `cppn.cfg`, `source/`: configuration and a hashed package-source snapshot.
+  Exports from a checkout also include CLI scripts, package metadata, the licence
+  and dependency lockfile.
 - `selected.png`: a convenience copy of the current selection.
-- Automated runs also have `grids/` and `checkpoints/`. Grids distinguish selection
-  mode and preference scores from raw measurements. Checkpoints are audit snapshots,
-  not resumable sessions; there is no resume command.
+- Both interfaces export `metrics.json`, `metrics.csv`, `index.html`, `grids/`
+  and `performance.json`. Human timing includes deliberation and idle time.
+- Automated runs also save `checkpoints/`: audit snapshots, not resumable sessions.
+  Grids distinguish selection mode and preference scores from raw measurements.
 
 Every selection event records its `position`, `genome`, ordered `displayed` IDs,
 `evaluation` and `decision`:
@@ -173,7 +176,8 @@ Every selection event records its `position`, `genome`, ordered `displayed` IDs,
 Measurements and scores belong to decisions, so repeated parent evaluations are
 recorded separately. Measurement rows follow `displayed`; column positions follow
 `names`. `metadata.selection_strategy` describes the selection strategy. Human
-exports have null `metadata.settings` and `summary`; automated summaries include
+exports record the seed, size and current controls in `metadata.settings`, with
+mutation settings retained per evolution event; their `summary` is null. Automated summaries include
 candidate presentations, evaluated images, unique candidates, selected score
 (null when unscored) and selection mode.
 
@@ -184,9 +188,8 @@ relative to the run directory.
 
 Existing version-2 HSB sessions remain readable by the interpretation notebooks,
 including older records with `metadata.selector` and no `decision` field. They
-are not migrated or rewritten. Version-1 exports and older rendering conventions
-are not supported by that reader. The previous experiment API and command have
-been replaced; use the API and CLI above for new runs.
+are not migrated or rewritten. The metrics exporter and viewer require current strategy and decision metadata;
+older records can still be inspected with the network loader.
 
 This remains a local single-parent experiment. It does not implement the shared
 archives, branching or critic agents in [Sakana's AI Picbreeder](https://pub.sakana.ai/picbreeder-vlm/).
@@ -316,7 +319,7 @@ they never download weights. To check the downloaded model itself, run notebook 
 
 ## References
 
-- [Experiment brief](experiment-brief.md), supplied by the project owner.
+- [Scientific objective and limitations](experiment-brief.md).
 - [NEAT-Python configuration](https://neat-python.readthedocs.io/en/latest/config_file.html).
   The installed 2.0.0 source is authoritative for this prototype; online docs may
   describe newer options.

@@ -19,15 +19,18 @@ def write_json(path, data):
 
 
 def _source_snapshot(directory):
-    root = Path(__file__).resolve().parents[2]
-    paths = [*sorted((root / "src" / "automated_picbreeder").glob("*.py")),
-             *sorted((root / "src" / "automated_picbreeder").glob("*.cfg")),
-             *sorted((root / "src" / "automated_picbreeder" / "viewer").glob("*.*")),
-             *sorted((root / "experiments").glob("*.py")), root / "pyproject.toml", root / "uv.lock"]
+    package = Path(__file__).resolve().parent
+    paths = {path: Path("src/automated_picbreeder") / path.relative_to(package)
+             for pattern in ("*.py", "*.cfg", "viewer/*.*") for path in sorted(package.glob(pattern))}
+    # Source checkouts also contain CLI entry points and the dependency lockfile.
+    root = package.parent.parent
+    if package.parent.name == "src" and (root / "pyproject.toml").is_file():
+        for path in [*sorted((root / "experiments").glob("*.py")),
+                     root / "pyproject.toml", root / "uv.lock", root / "LICENSE"]:
+            paths[path] = path.relative_to(root)
     hashes = {}
-    for path in paths:
+    for path, relative in paths.items():
         if path.is_file():
-            relative = path.relative_to(root)
             target = directory / "source" / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, target)

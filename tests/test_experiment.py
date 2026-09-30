@@ -343,3 +343,24 @@ def test_session_rejects_decision_for_a_different_position():
 def test_settings_reject_ambiguous_seeds(kwargs):
     with pytest.raises(ValueError, match="seed"):
         ExperimentSettings(**kwargs)
+
+
+def test_source_snapshot_uses_installed_package_without_a_source_checkout(tmp_path, monkeypatch):
+    from automated_picbreeder import persistence
+
+    package = tmp_path / "site-packages" / "automated_picbreeder"
+    (package / "viewer").mkdir(parents=True)
+    (package / "persistence.py").write_text('"""Installed source."""\n')
+    (package / "cppn.cfg").write_text("[CPPNRendering]\noutput_mapping = picbreeder_hsb_v1\n")
+    (package / "viewer" / "report.js").write_text("// Offline viewer\n")
+    monkeypatch.setattr(persistence, "__file__", str(package / "persistence.py"))
+    output = tmp_path / "snapshot"
+    hashes = persistence._source_snapshot(output)
+    assert set(hashes) == {
+        "src/automated_picbreeder/persistence.py",
+        "src/automated_picbreeder/cppn.cfg",
+        "src/automated_picbreeder/viewer/report.js",
+    }
+    for relative, digest in hashes.items():
+        content = (output / "source" / relative).read_bytes()
+        assert persistence.hashlib.sha256(content).hexdigest() == digest

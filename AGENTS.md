@@ -67,7 +67,6 @@ selection-time references; do not label maxima as means. Max forecasts the expec
 best value of an eight-child brood. Existing saved mean runs retain their meaning
 and are not rewritten. Derived `display_novelty` always uses the previous displayed
 grid mean; it differs from strategy `pixel_novelty` in previous-parent mode.
-History-based novelty selection is deferred.
 
 ## Code structure
 
@@ -159,8 +158,8 @@ advertised mechanism to affect selection; label shorter runs as smoke tests or
 explain explicit warm-up overrides. Check examples against the parser and keep
 `tests/test_strategy_docs.py` passing. Preserve useful notebook, export and
 interpretation instructions in `docs/usage.md`, and update the experiment brief
-and metric definitions when semantics change. Historical plan documents describe
-their original design and must not be silently rewritten as current API guides.
+and metric definitions when semantics change. Document current behaviour and
+scientific limitations; omit completed implementation plans and deferred features.
 
 ## Development and verification
 

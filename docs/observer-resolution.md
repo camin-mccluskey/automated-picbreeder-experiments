@@ -1,17 +1,15 @@
-# Can the predictability observer use 96×96 images?
+# Observer resolution and measured cost
 
-**Yes. The previous 32×32 limit came from our observer implementation, not ImageNet
-or ResNet18.** Following this investigation, the user approved 96×96 with sixteen
-24×24 masks as the single production configuration. The observer now uses that
-configuration; 32×32 remains only a historical benchmark comparison. It uses more memory and computation; it does not
-require a new pretrained checkpoint. The measurements below motivated the change,
-but do not establish improved selection quality.
+The reconstruction observer uses a fixed **96×96 input with sixteen 24×24
+masks**. This retains the complete image at the default rendering resolution;
+other sizes are bilinearly resized to 96×96 without cropping. The measurements
+below describe compute and memory costs, not selection quality.
 
 ## Which model is affected?
 
 | Component | Current input handling | Consequence of 96×96 |
 | --- | --- | --- |
-| Frozen ImageNet classifier | Applies its checkpoint's image transform. Default ResNet18 resizes to 256, then centre-crops to 224. | Already accepts a 96×96 source image. No connection to the observer's 32×32 restriction. It does not see the complete source frame after cropping. |
+| Frozen ImageNet classifier | Applies its checkpoint's image transform. Default ResNet18 resizes to 256, then centre-crops to 224. | Already accepts a 96×96 source image. It does not see the complete source frame after cropping. |
 | Scratch reconstruction observer | Resizes each image to 96×96; predicts hidden RGB pixels using a modified ResNet18. | Preprocessing, masks and output head use the same resolution. No checkpoint constraint. |
 | ImageNet-initialized reconstruction observer | Same architecture and reconstruction objective; loads only pretrained backbone weights, with a new head and fourth mask channel. All parameters train. | Backbone weights have compatible shapes at 96×96. The new reconstruction head remains randomly initialized. Compatibility does not establish good reconstruction or useful selection. |
 | Offspring scalar predictor | Separate model taking full-resolution parent/reference pixels and scoring context. | No need to resize its inputs to match the reconstruction observer. Its inputs already retain source resolution. |
@@ -28,17 +26,16 @@ of our resolutions.
 
 In [image_predictability.py](../src/automated_picbreeder/image_predictability.py),
 the fixed resolution determines preprocessing, visibility tensors, tile coordinates,
-head width, output reshaping and reconstruction assembly. The previous 32×32 head
-was `512 → 3072`; the 96×96 head is `512 → 27648`. Simply removing the original resize
-would not have been sufficient.
+head width, output reshaping and reconstruction assembly. The reconstruction head
+is `512 → 27648`, producing three channels per pixel.
 
 ## Mask size changes the question and the cost
 
 | Configuration | Hidden region per prediction | Fraction hidden | Predictions per image | Predictions for nine images |
 | --- | --- | --- | --- | --- |
-| Historical baseline: 32×32, 8×8 tiles | 64 pixels | 1/16 | 16 | 144 |
-| Production: 96×96, 24×24 tiles | 576 pixels | 1/16 | 16 | 144 |
-| Alternative 96×96, 8×8 tiles | 64 pixels | 1/144 | 144 | 1,296 |
+| Benchmark: 32×32, 8×8 tiles | 64 pixels | 1/16 | 16 | 144 |
+| Implemented: 96×96, 24×24 tiles | 576 pixels | 1/16 | 16 | 144 |
+| Benchmark: 96×96, 8×8 tiles | 64 pixels | 1/144 | 144 | 1,296 |
 
 Sixteen 24×24 masks preserve the hidden fraction and the number of inference
 passes. The observer sees the detail previously removed by downsampling, but
@@ -62,8 +59,8 @@ to the process, so there are no measured GPU results.
 
 The one-off benchmark used the modified ResNet18, synthetic random RGB images,
 masking, hidden-pixel loss and real Adam updates. It downloaded no checkpoint.
-The script was removed after this investigation at the user's request; the
-measurements and methodology are retained here. Both initialization arms
+The one-off benchmark script is not included; these are recorded measurements,
+not a benchmark suite shipped with the project. Both initialization arms
 have the same architecture; their selection quality is not tested here.
 
 | Measurement | 32×32 / 8×8 | 96×96 / 24×24 | 96×96 / 8×8 |
@@ -105,35 +102,14 @@ replay uses nine times as much image storage at 96×96. Ten thousand prepared
 images alone occupy approximately 117 MiB versus 1,055 MiB, before Python/container
 overhead. Whole-run memory must therefore be measured separately.
 
-## Implemented choice and remaining empirical checks
+## Scope
 
-The approved configuration is **96×96 with sixteen 24×24 masks** on both
-patch-observer strategies. There is no observer-resolution option or production
-32×32 mode. The frozen ImageNet classifier retains its separate preprocessing.
-A 96×96 observer is full
-resolution only for 96×96 source images; other source dimensions are bilinearly
-resized to 96×96, without a centre crop.
+Only the 96×96, sixteen-mask configuration is implemented. Observer provenance
+records size, tile size, hidden fraction and mask count, including in frozen
+snapshots. Tests cover mask coverage, hidden-pixel loss, matching-resolution pixel
+preservation, scoring and training, matched head initialization, seeded replay
+and independent snapshots.
 
-The implementation records size, tile size, hidden fraction and mask count in
-observer provenance, and preserves that configuration in frozen snapshots.
-There are always sixteen masks, evaluated together per image. The 144-mask
-configuration was investigated only in the one-off benchmark. Existing saved runs retain their original
-meaning; they are not rewritten.
-
-Focused observer tests cover the 96×96 implementation: exact mask coverage, hidden-pixel
-loss, source-pixel preservation at matching resolution, finite scoring/training,
-matched scratch/pretrained head initialization, seeded training replay and
-independent frozen snapshots.
-
-The following scientific and performance checks remain useful:
-
-1. Benchmark real saved CPPN grids and short complete runs, including replay,
-   snapshots and predictor cost. Measure CPU and available MPS separately.
-   Compare matched decision budgets and report wall-clock costs separately.
-2. Inspect held-out reconstruction and selection on flat fields, fine textures
-   and structured images. Check whether 96×96 changes the suspected novelty versus
-   predictability mismatch before treating it as an improved selection criterion.
-
-The objective remains hidden-pixel reconstruction error. Changing resolution
-changes the detail and region being predicted; it does not resolve the objective's
-preference for simplicity and familiarity.
+The objective is hidden-pixel reconstruction error. Full-resolution targets do
+not resolve its preference for simplicity and familiarity. These microbenchmarks
+exclude complete-run costs and do not establish improved selection quality.

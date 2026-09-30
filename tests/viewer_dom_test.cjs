@@ -38,6 +38,8 @@ assert.match(app.textContent,/Evolution records/);
 const cards=app.querySelectorAll('.run-card');assert.equal(cards.length,payload.runs.length);
 click(cards[0]);
 assert.match(app.textContent,/RUN INSPECTOR/);
+assert.ok(app.querySelectorAll('h3').some(e=>e.textContent==='Novelty'));
+assert.ok(app.querySelectorAll('h3').some(e=>e.textContent==='Display novelty')); // previous-parent differs from display mean
 assert.equal(app.querySelectorAll('.candidate').length,9);
 const slider=document.getElementById('generation-slider');slider.value='0';slider.oninput();
 assert.equal(document.getElementById('selection-index').textContent,'Selection 0 / 2');

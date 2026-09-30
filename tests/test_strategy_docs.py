@@ -14,8 +14,9 @@ from automated_picbreeder import selection_strategies
 ROOT = Path(__file__).resolve().parents[1]
 GUIDES = ROOT / "docs" / "strategies"
 COMMON = (ROOT / "docs" / "run-options.md", GUIDES / "options.md")
-DOCS = (ROOT / "README.md", *COMMON, ROOT / "docs" / "usage.md",
-        *(GUIDES / f"{name}.md" for name, _, _ in COMMANDS))
+DOCS = (ROOT / "README.md", *(path for path in sorted((ROOT / "docs").rglob("*.md"))
+                             if not any(part.startswith(".") for part in path.relative_to(ROOT).parts)),
+        ROOT / "src" / "automated_picbreeder" / "reference_data" / "skull" / "README.md")
 LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
 

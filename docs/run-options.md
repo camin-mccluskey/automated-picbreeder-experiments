@@ -45,5 +45,5 @@ Pure random selection evaluates no images. Patch observers additionally process
 A 100-decision run therefore presents 900 candidates and generates 801 genomes.
 Saved checkpoints are audit records, not resumable sessions. All generated images,
 including rejected alternatives, are preserved; see [saved sessions](usage.md#saved-sessions).
-Existing version-2 HSB sessions retain their original meaning and remain readable
-without migration. New max targets do not reinterpret historical mean targets.
+The network loader also reads older version-2 HSB sessions. Metrics and viewers
+require current strategy and decision metadata; see [format details](usage.md#saved-sessions).
