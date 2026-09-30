@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 from urllib.parse import quote
+import webbrowser
 
 from .experiment_metrics import build_run_metrics, summarize_batch
 
@@ -43,7 +44,7 @@ def _run(directory, output, entry, refresh):
         session = json.loads((directory / "session.json").read_text())
         images = [{"genome_id": record["key"], "parent_id": record["parent"], "path": record["image"],
                    "url": _url(directory, record["image"], output)} for record in session["genomes"]]
-        files = {name: _url(directory, name, output) for name in ("session.json", "metrics.json", "metrics.csv", "posthoc_imagenet.json")
+        files = {name: _url(directory, name, output) for name in ("session.json", "metrics.json", "metrics.csv", "posthoc_imagenet.json", "selection_failure.json")
                  if (directory / name).is_file()}
         run.update(images=images, files=files)
         report = (build_run_metrics(directory, status=entry.get("status")) if refresh else
@@ -111,12 +112,16 @@ def write_viewer(sources, *, output=None, refresh=True):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Build an offline HTML viewer for saved automated or human experiments.")
-    parser.add_argument("sources", nargs="+", type=Path, help="Run, batch or parent collection directories.")
+    parser = argparse.ArgumentParser(description="Build and open an offline HTML viewer for saved automated or human experiments.")
+    parser.add_argument("sources", nargs="*", type=Path, default=[Path("runs")],
+                        help="Run, batch or parent collection directories (default: runs/).")
     parser.add_argument("--output", type=Path, help="HTML output (default: first source/index.html).")
+    parser.add_argument("--no-open", action="store_true", help="Build the HTML without opening a browser.")
     args = parser.parse_args(argv)
     try:
         result = write_viewer(args.sources, output=args.output)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
     print(f"Open {result.resolve()}")
+    if not args.no_open:
+        webbrowser.open(result.resolve().as_uri())

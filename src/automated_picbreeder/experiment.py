@@ -12,7 +12,7 @@ from .breeding import BreedingSession
 from .cppn import png_bytes, render
 from .experiment_reporting import contact_sheet, progress_message
 from .persistence import SessionWriter, write_json
-from .selection_strategies import SelectionStrategy
+from .selection_strategies import SelectionError, SelectionStrategy
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,7 @@ def run_experiment(
     start = time.perf_counter()
     timings = []
     evaluated_images = candidate_presentations = 0
+    inference_totals = {}
     for step in range(settings.steps):
         decision_start = time.perf_counter()
         if step:
@@ -83,7 +84,14 @@ def run_experiment(
         # Preserve the current grid even if the selection strategy fails.
         writer.save(session, images={key: png_bytes(pixels) for key, pixels in zip(ids, images)})
         saved_grid = time.perf_counter()
-        decision = selection_strategy.choose(images, rng=selection_rng)
+        try:
+            decision = selection_strategy.choose(images, rng=selection_rng)
+        except SelectionError as exc:
+            write_json(directory / "selection_failure.json", {
+                "generation": step, "candidate_ids": ids, "error": str(exc),
+                "metadata": exc.metadata,
+            })
+            raise
         decision.validate(len(ids))
         chosen = time.perf_counter()
         if decision.evaluation is not None:
@@ -93,6 +101,9 @@ def run_experiment(
                 raise ValueError("Evaluator column names/order changed during the run.")
             evaluated_images += len(ids)
         session.select(decision.position, decision=decision)
+        for key, value in decision.metadata.get("inference", {}).items():
+            previous = inference_totals.get(key, 0)
+            inference_totals[key] = previous + value if previous is not None and value is not None else None
         candidate_presentations += len(ids)
         decisions = step + 1
         summary = {
@@ -102,6 +113,7 @@ def run_experiment(
             "selected_id": session.selected_id, "selection_mode": decision.mode,
             "selected_score": None if decision.scores is None else float(decision.scores[decision.position]),
             "elapsed_seconds": time.perf_counter() - start,
+            **inference_totals,
         }
         contact_sheet(images, ids, decision).save(directory / "grids" / f"{step:06d}.png")
         checkpoint = step if decisions % settings.checkpoint_every == 0 or decisions == settings.steps else None

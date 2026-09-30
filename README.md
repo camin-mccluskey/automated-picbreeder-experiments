@@ -34,23 +34,30 @@ all applicable options. Use a fresh strategy and output directory for each run.
 | [Novelty + predictability](docs/strategies/novelty-predictability.md) | Combine novelty and learned masked-pixel accuracy ranks |
 | [Offspring value](docs/strategies/offspring-value.md) | Add predicted best-child or mean-child value using patch predictability |
 | [Offspring value + ImageNet](docs/strategies/offspring-value-imagenet.md) | Add the same offspring forecast using frozen classification confidence |
+| [VLM](docs/strategies/vlm.md) | Ask an OpenRouter VLM to choose the most interesting of nine images |
 
 ```sh
 uv run python experiments/run_selection.py random --steps 100 --seed 7
 uv run python experiments/run_selection.py --help
 ```
 
-Put the strategy before all options. Model strategies require
-`uv run --extra imagenet`; checkpoints may download on first use.
+Put the strategy before all options. Local model strategies require
+`uv run --extra imagenet`; checkpoints may download on first use. VLM selection
+uses `uv run --extra vlm`, an explicit `--vlm-model`, and `OPENROUTER_API_KEY` in
+the ignored `.env` file (copy `.env.example` on a fresh checkout).
 [Run options and reproducibility](docs/run-options.md) covers seeds, batches,
 rendering and budgets. [Shared model options](docs/strategies/options.md) covers
 observer, classifier and predictor settings.
 
-Every export includes an offline `index.html` viewer. To collect saved results:
+Every export includes an offline `index.html` viewer. To collect saved results
+and open them in your default browser, run from the repository root:
 
 ```sh
-uv run python experiments/view_results.py runs/
+uv run viewer
 ```
+
+Pass a run or batch path to view only those results: `uv run viewer runs/my-run`.
+Use `--no-open` to build the HTML without opening a browser.
 
 [Batch experiments and metrics](docs/batch-experiments.md) explains diagnostics,
 failures, human-session comparisons and sharing reports with their image folders.

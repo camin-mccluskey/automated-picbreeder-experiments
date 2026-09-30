@@ -261,6 +261,7 @@ def build_run_metrics(directory, *, status=None):
             history.append(selected)
             seen.add(identity)
         decision = event["decision"]
+        decision_metadata = (decision or {}).get("metadata", {})
         scores = None if decision is None else decision["scores"]
         parent = context["retained_parent"]
         metrics = dict(pixel_mse_previous=distance, pixel_mse_nearest_earlier=nearest,
@@ -271,6 +272,7 @@ def build_run_metrics(directory, *, status=None):
                        selected_score=None if scores is None else scores[position])
         for name in ("breeding_seconds", "rendering_seconds", "selection_seconds", "saving_seconds", "decision_seconds"):
             metrics[name] = timings.get(generation, {}).get(name)
+        metrics.update(decision_metadata.get("inference", {}))
         if human:
             metrics["interaction_elapsed_seconds"] = interaction.get(context["event_index"], {}).get("elapsed_seconds")
         candidates = [{"position": i, "genome_id": key, "image": records[key]["image"],
@@ -303,6 +305,7 @@ def build_run_metrics(directory, *, status=None):
                          posthoc_selected_class=posthoc_class,
                          selection_mode="human" if decision is None else decision["mode"], grid=f"grids/{generation:06d}.png",
                          candidates=candidates, metrics=metrics, on_final_ancestry=event["genome"] in ancestry_ids,
+                         **({"decision_metadata": decision_metadata} if decision_metadata else {}),
                          **{key: context[key] for key in ("event_index", "display_index", "round", "mutation", "preceding_actions", "candidate_presentations")}))
         previous, previous_id, previous_class = selected, event["genome"], selected_class
         previous_posthoc_class = posthoc_class
@@ -324,7 +327,10 @@ def build_run_metrics(directory, *, status=None):
         "offspring_prediction": _forecast_summary(rows) if "offspring_forecast_used" in keys else None,
     }
     for key in keys:
-        if (key.endswith("_seconds") and key != "interaction_elapsed_seconds") or key.endswith(("_inputs", "_updates", "_examples", "_reused")):
+        if key.startswith("api_"):
+            values = [row["metrics"].get(key) for row in rows]
+            summary["metrics"][key]["total"] = sum(values) if all(v is not None for v in values) else None
+        elif (key.endswith("_seconds") and key != "interaction_elapsed_seconds") or key.endswith(("_inputs", "_updates", "_examples", "_reused")):
             values = [row["metrics"].get(key) for row in rows]
             summary["metrics"][key]["total"] = sum(v for v in values if v is not None) if any(v is not None for v in values) else None
     return dict(schema_version=SCHEMA_VERSION, status=status or (data.get("summary") or {}).get("status", "complete" if human else "incomplete"),

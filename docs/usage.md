@@ -172,6 +172,7 @@ Every selection event records its `position`, `genome`, ordered `displayed` IDs,
 | Novelty plus predictability | Raw novelty/comprehension, pre-update errors, ranks and observer learning records | First `"random"`, then `"greedy"`; weighted rank scores |
 | Offspring value | Current-image measurements, frozen child targets, original forecasts, delayed errors and predictor training records | Current-image value plus the weighted forecast after warm-up |
 | ImageNet | Full measurement values, names and provenance | `mode: "greedy"` or `"random"`, one maximum-class score per candidate |
+| VLM | `null` | `mode: "vlm"`, `scores: null`, metadata with selected index/reason, request settings, responses and API costs |
 
 Measurements and scores belong to decisions, so repeated parent evaluations are
 recorded separately. Measurement rows follow `displayed`; column positions follow
@@ -185,6 +186,9 @@ Snapshots are written before calling the selection strategy and after recording
 its decision. A strategy failure leaves the current grid and earlier decisions
 available, with a null summary. Image paths in sessions and checkpoints are
 relative to the run directory.
+VLM API failures additionally save `selection_failure.json` with the failed
+grid's request diagnostics. The [VLM guide](strategies/vlm.md) explains setup,
+structured selection, costs and remote replay limitations.
 
 Existing version-2 HSB sessions remain readable by the interpretation notebooks,
 including older records with `metadata.selector` and no `decision` field. They

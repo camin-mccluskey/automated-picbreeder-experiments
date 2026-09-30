@@ -111,15 +111,18 @@ Open it directly in a browser. It needs no running server, external JavaScript,
 internet connection or model inference. A batch's viewer is updated as runs
 finish; reload the file to see the latest snapshot.
 
-Build or refresh a viewer for existing results:
+Build or refresh a viewer for existing results and open it in your default
+browser. Run `uv run viewer` from the repository root to collect all of `runs/`.
+Pass `--no-open` to generate HTML without opening a browser. Explicit paths and
+`--output` are supported by both `viewer` and `experiments/view_results.py`:
 
 ```sh
 # A run, a batch, or all experiments beneath a collection directory.
-uv run python experiments/view_results.py runs/novelty-batch
-uv run python experiments/view_results.py runs/
+uv run viewer runs/novelty-batch
+uv run viewer
 
 # Combine chosen automated and human sessions in a single report.
-uv run python experiments/view_results.py runs/novelty-batch runs/cppn-SAVED-TIMESTAMP --output runs/comparison.html
+uv run viewer runs/novelty-batch runs/cppn-SAVED-TIMESTAMP --output runs/comparison.html
 ```
 
 With no `--output`, the file is `index.html` inside the first source directory.
@@ -293,6 +296,30 @@ images contribute equally to grid means/ranges, including duplicates and the
 retained parent. Random selection has no classifier scores or evaluations.
 
 ## Strategy diagnostics
+
+### VLM
+
+VLM decisions have no numeric candidate scores or evaluation rows. The selected
+index and reason, exact prompt/protocol/schema, model/settings, ordered PNG
+hashes and SDK responses are saved under `decision.metadata.vlm` in the session
+and `decision_metadata.vlm` in each metrics JSON row. Reasons are also shown in
+the offline viewer. These are reported preferences, not measured interestingness.
+
+| Metric | Definition |
+| --- | --- |
+| `api_requests` | OpenRouter request attempts for this choice, including transient retries |
+| `api_images_submitted` | Nine images per attempted request, including duplicates and retained parent |
+| `api_prompt_tokens`, `api_completion_tokens` | Sum of reported usage over all attempts, or null if any attempt lacks usage |
+| `api_cost_usd` | Sum of reported USD cost over all attempts, or null if any attempt lacks cost |
+| `api_seconds` | Host wall time for the API operation including retry waits, nested inside selection time |
+
+All API metrics have per-run totals; totals remain null if any constituent value
+is unknown. Completed runs contribute equally to batch aggregates. Counts refer
+to client attempts, not confirmed provider processing or internal routing attempts.
+`evaluated_images` and `classifier_images` remain zero for VLM selection.
+Failure diagnostics and any reported costs for the unselected final grid are
+in `selection_failure.json`; completed-decision metrics exclude that request.
+See [VLM selection](strategies/vlm.md) for options and replay limitations.
 
 ### Novelty
 

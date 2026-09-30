@@ -253,6 +253,8 @@
     const panel=document.getElementById('visual-panel');panel.replaceChildren();
     const hero=button('',()=>zoom(run,{image:row.selected_image,genome_id:row.selected_id,...row.metrics},`Selected genome #${row.selected_id}`),'hero-image');hero.setAttribute('aria-label',`Enlarge selected genome ${row.selected_id}`);hero.append(image(run,row.selected_image,`Selected genome #${row.selected_id}`,true));panel.append(hero);
     const caption=node('div',null,'image-caption');caption.append(node('span',`SELECTED #${row.selected_id}`),node('span',`ROUND ${row.round} · DISPLAY ${row.display_index}`));panel.append(caption);
+    const vlm=row.decision_metadata?.vlm;
+    if(vlm?.reason)panel.append(node('p',`VLM choice: Image ${vlm.selected_index}. ${vlm.reason}`,'note'));
     const grid=node('div',null,'candidate-grid');row.candidates.forEach((candidate,i)=>{
       const b=button('',()=>zoom(run,candidate,`Candidate ${i} · genome #${candidate.genome_id}`),`candidate ${i===row.selected_position?'chosen':''}`);
       b.setAttribute('aria-label',`Candidate ${i}, genome ${candidate.genome_id}${i===row.selected_position?', selected':''}`);

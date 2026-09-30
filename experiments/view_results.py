@@ -1,4 +1,4 @@
-"""Build a local viewer: uv run python experiments/view_results.py runs/"""
+"""Build and open a local viewer; also available as uv run viewer."""
 
 from automated_picbreeder.experiment_viewer import main
 

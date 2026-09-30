@@ -57,7 +57,7 @@ def test_documented_python_constructor_defaults_match_source(name):
     for parameter in signature.parameters.values():
         assert parameter.default is not inspect.Parameter.empty
         value = repr(parameter.default).replace("'", '\"')
-        assert f"{parameter.name}={value}" in compact, (
+        assert re.sub(r"\s+", "", f"{parameter.name}={value}") in compact, (
             f"Update {name}'s documented default: {parameter.name}={value}"
         )
 

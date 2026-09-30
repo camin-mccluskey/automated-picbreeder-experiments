@@ -21,9 +21,12 @@ children. The networks map pixel coordinates to hue, saturation and brightness.
 NEAT-Python supplies genome initialization and mutation; the project does not use
 its population, speciation or crossover algorithm.
 
-The [seven selection strategies](../README.md#automated-selection-experiments)
+The [eight selection strategies](../README.md#automated-selection-experiments)
 cover random choice, pixel novelty, frozen ImageNet confidence, learned masked-pixel
-accuracy and forecasts of immediate offspring value. Observer and predictor
+accuracy, forecasts of immediate offspring value and direct VLM choices.
+The VLM sees nine separate images in one request and chooses using the prompt
+"choose the most interesting image to you", without conversation history.
+Observer and predictor
 networks are separate from the CPPNs being evolved. The strategy guides describe
 their exact rules, defaults, warm-up schedules and limitations.
 
@@ -57,6 +60,9 @@ naturalness, creativity or human preference. Masked-pixel accuracy can favour fl
 or familiar images. Pixel diversity can reward noise. Offspring forecasts concern
 the next eight children, not long-term potential. Improvements in these quantities
 do not by themselves demonstrate UFR or sustained open-endedness.
+VLM choices express a remote model's prompt-conditioned preferences; neither
+those choices nor its stated reasons establish human interestingness or UFR.
+Record API calls, usage and cost separately from local classifier evaluations.
 
 Comparisons need matched mutation settings, image sizes, independent seed schedules
 and decision budgets, with inference and training costs reported separately.

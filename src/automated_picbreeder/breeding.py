@@ -56,6 +56,8 @@ class BreedingSession:
             "mode": decision.mode,
             "scores": None if decision.scores is None else decision.scores.tolist(),
         }
+        if decision is not None and decision.metadata:
+            selection["metadata"] = deepcopy(decision.metadata)
         self.selected_id = self.candidates[position]
         self.events.append({"action": "select", "position": position, "genome": self.selected_id,
                             "displayed": self.candidates.copy(), "evaluation": measurements,

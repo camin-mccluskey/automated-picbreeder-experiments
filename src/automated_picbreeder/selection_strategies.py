@@ -1,9 +1,10 @@
 """Choose the next image; evaluation and scoring belong to the selection strategy."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from copy import deepcopy
 import hashlib
+import json
 import time
 from numbers import Integral, Real
 from random import Random
@@ -16,6 +17,14 @@ from .evaluation import Evaluation, ImageArray, validate_image
 
 if TYPE_CHECKING:
     from .imagenet import ImageNetEvaluator
+
+
+class SelectionError(RuntimeError):
+    """A failed choice with JSON-compatible diagnostics for the runner to save."""
+
+    def __init__(self, message, *, metadata):
+        super().__init__(message)
+        self.metadata = metadata
 
 
 @dataclass(frozen=True)
@@ -32,6 +41,7 @@ class SelectionDecision:
     mode: str
     evaluation: Evaluation | None = None
     scores: NDArray[np.floating] | None = None
+    metadata: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if isinstance(self.position, bool) or not isinstance(self.position, Integral) or self.position < 0:
@@ -39,6 +49,9 @@ class SelectionDecision:
         object.__setattr__(self, "position", int(self.position))
         if not isinstance(self.mode, str) or not self.mode.strip():
             raise ValueError("Selection mode must be a non-empty string.")
+        if not isinstance(self.metadata, dict):
+            raise ValueError("Decision metadata must be a JSON-compatible dictionary.")
+        object.__setattr__(self, "metadata", json.loads(json.dumps(self.metadata, allow_nan=False)))
         if self.scores is not None:
             scores = np.asarray(self.scores)
             if scores.ndim != 1 or scores.dtype.kind not in "fiu" or not np.isfinite(scores).all():
@@ -82,6 +95,35 @@ class RandomSelectionStrategy:
 
     def describe(self) -> dict:
         return {"selection_strategy": "random", "rule": "uniform over all candidates, including the parent"}
+
+
+class VLMSelectionStrategy:
+    """Choose directly from nine labelled PNGs in one stateless OpenRouter request."""
+
+    def __init__(self, *, model=None, prompt="choose the most interesting image to you",
+                 temperature=0.0, max_completion_tokens=1024, timeout=120.0,
+                 max_retries=2, env_file=None, client=None):
+        from .vlm import OpenRouterSelection
+
+        self._selector = OpenRouterSelection(
+            model=model, prompt=prompt, temperature=temperature,
+            max_completion_tokens=max_completion_tokens, timeout=timeout,
+            max_retries=max_retries, env_file=env_file, client=client,
+        )
+
+    def choose(self, images: Sequence[ImageArray], *, rng: Random) -> SelectionDecision:
+        # Fixed presentation order and no local random choice: do not consume rng.
+        if len(images) != 9:
+            raise ValueError("VLM selection requires exactly nine RGB images.")
+        for image in images:
+            validate_image(image)
+            if image.ndim != 3:
+                raise ValueError("VLM selection requires RGB images.")
+        position, metadata = self._selector.select(images)
+        return SelectionDecision(position=position, mode="vlm", metadata=metadata)
+
+    def describe(self) -> dict:
+        return {"selection_strategy": "vlm", **self._selector.describe()}
 
 
 def _percentile_ranks(values: NDArray) -> NDArray:
