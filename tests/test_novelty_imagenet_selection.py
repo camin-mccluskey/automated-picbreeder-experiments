@@ -53,11 +53,12 @@ def test_first_grid_and_weighted_ranks_then_reference_replacement():
     assert rng.getstate() == state
 
 
+@pytest.mark.parametrize("reference", ["previous-grid-mean", "previous-parent"])
 @pytest.mark.parametrize("weight", [0, 1])
-def test_endpoint_choices_and_rng_match_existing_strategies(weight):
+def test_endpoint_choices_and_rng_match_existing_strategies(weight, reference):
     evaluator = ControlledClassifier()
-    strategy = NoveltyImageNetSelectionStrategy(weight, evaluator=evaluator)
-    baseline = NoveltySelectionStrategy() if weight == 0 else ImageNetSelectionStrategy(evaluator=evaluator)
+    strategy = NoveltyImageNetSelectionStrategy(weight, evaluator=evaluator, novelty_reference=reference)
+    baseline = NoveltySelectionStrategy(novelty_reference=reference) if weight == 0 else ImageNetSelectionStrategy(evaluator=evaluator)
     rng, baseline_rng = random.Random(7), random.Random(7)
     for images in ([solid(i * 30) for i in range(9)], [solid(128)] * 9,
                    [solid(255), solid(0), solid(255)], [solid(0)]):
@@ -119,18 +120,19 @@ def test_invalid_grid_or_evaluation_does_not_advance_reference_or_rng():
     assert result.evaluation.metadata["reference_generation"] is None
 
 
-def test_saved_run_preserves_classifier_records_and_replays(tmp_path):
+@pytest.mark.parametrize("reference", ["previous-grid-mean", "previous-parent"])
+def test_saved_run_preserves_classifier_records_and_replays(tmp_path, reference):
     output = tmp_path / "run"
     settings = ExperimentSettings(steps=3, size=8, checkpoint_every=2)
     evaluator = ControlledClassifier()
-    run_experiment(selection_strategy=NoveltyImageNetSelectionStrategy(evaluator=evaluator),
+    run_experiment(selection_strategy=NoveltyImageNetSelectionStrategy(evaluator=evaluator, novelty_reference=reference),
                    output_dir=output, settings=settings, progress=None)
     data = json.loads((output / "session.json").read_text())
     assert data["metadata"]["selection_strategy"]["selection_strategy"] == "novelty-imagenet"
     assert data["summary"]["evaluated_images"] == 27
     assert data["summary"]["unique_candidates"] == 25
     records = {g["key"]: g for g in data["genomes"]}
-    strategy = NoveltyImageNetSelectionStrategy(evaluator=evaluator)
+    strategy = NoveltyImageNetSelectionStrategy(evaluator=evaluator, novelty_reference=reference)
     rng = random.Random(settings.resolved_selection_seed)
     for event in (e for e in data["events"] if e["action"] == "select"):
         images = [np.array(Image.open(output / records[key]["image"])) for key in event["displayed"]]

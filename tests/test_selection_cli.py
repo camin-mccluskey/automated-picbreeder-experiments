@@ -37,6 +37,10 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
     assert kwargs["settings"] == ExperimentSettings()
     assert kwargs["output_dir"] == output
     strategy = kwargs["selection_strategy"]
+    if name.startswith("offspring-value"):
+        assert strategy.offspring_aggregation == "max"
+    if name not in ("random", "imagenet"):
+        assert strategy.novelty_reference == "previous-grid-mean"
     if name == "random":
         assert isinstance(strategy, RandomSelectionStrategy)
         factory.assert_not_called()
@@ -67,6 +71,9 @@ def test_cli_constructs_selection_strategy_and_matches_python_defaults(tmp_path,
 
 
 @pytest.mark.parametrize("args", [
+    ["offspring-value", "--offspring-aggregation", "median"],
+    ["offspring-value-imagenet", "--offspring-aggregation", "median"],
+    ["novelty", "--novelty-reference", "all-history"],
     ["offspring-value-imagenet", "--epsilon", "0"],
     ["offspring-value-imagenet", "--observer-initialization", "imagenet"],
     ["offspring-value-imagenet", "--comprehension-warmup-steps", "0"],
@@ -176,18 +183,19 @@ def test_cli_forwards_all_observer_predictor_and_run_options(tmp_path, monkeypat
         name, "--output", str(output), "--cache-dir", str(cache),
         "--device", "mps", "--comprehension-weight", "0.7",
         "--comprehension-warmup-steps", "0",
+        "--novelty-reference", "previous-parent",
         "--observer-initialization", initialization, "--training-steps", "3",
         "--observer-batch-size", "4", "--learning-rate", "0.002",
         "--seed", "9", "--selection-seed", "42", "--steps", "12", "--size", "32",
         "--mutation-strength", "0.4", "--no-topology", "--checkpoint-every", "3",
     ]
-    expected = dict(comprehension_weight=.7, comprehension_warmup_steps=0, observer_initialization=initialization,
+    expected = dict(novelty_reference="previous-parent", comprehension_weight=.7, comprehension_warmup_steps=0, observer_initialization=initialization,
                     training_steps=3, batch_size=4, learning_rate=.002,
                     device="mps", cache_dir=cache)
     if name == "offspring-value":
-        args += ["--gamma", "0.3", "--warmup-targets", "2", "--predictor-training-steps", "5",
+        args += ["--offspring-aggregation", "mean", "--gamma", "0.3", "--warmup-targets", "2", "--predictor-training-steps", "5",
                  "--predictor-batch-size", "6", "--predictor-learning-rate", "0.003"]
-        expected.update(gamma=.3, warmup_targets=2, predictor_training_steps=5,
+        expected.update(offspring_aggregation="mean", gamma=.3, warmup_targets=2, predictor_training_steps=5,
                         predictor_batch_size=6, predictor_learning_rate=.003)
     main(args)
     factory.assert_called_once_with(**expected)
@@ -230,6 +238,7 @@ def test_cli_forwards_imagenet_offspring_options(tmp_path, monkeypatch):
     monkeypatch.setitem(main.__globals__, "run_experiment", runner)
     cache = tmp_path / "weights"
     main(["offspring-value-imagenet", "--comprehension-weight", "0.7",
+          "--offspring-aggregation", "mean", "--novelty-reference", "previous-parent",
           "--gamma", "2", "--warmup-targets", "3", "--predictor-training-steps", "4",
           "--predictor-batch-size", "5", "--predictor-learning-rate", "0.002",
           "--imagenet-model", "resnet50", "--imagenet-weights", "IMAGENET1K_V2",
@@ -238,6 +247,7 @@ def test_cli_forwards_imagenet_offspring_options(tmp_path, monkeypatch):
     evaluator.assert_called_once_with(model_name="resnet50", weights="IMAGENET1K_V2",
                                      batch_size=3, device="mps", cache_dir=cache)
     strategy.assert_called_once_with(comprehension_weight=.7, gamma=2, warmup_targets=3,
+        offspring_aggregation="mean", novelty_reference="previous-parent",
         predictor_training_steps=4, predictor_batch_size=5, predictor_learning_rate=.002,
         device="mps", evaluator=evaluator.return_value)
     assert runner.call_args.kwargs['selection_strategy'] is strategy.return_value
@@ -327,6 +337,8 @@ STRATEGIES = (
     "offspring-value", "offspring-value-imagenet",
 )
 OPTION_FAMILIES = (
+    ("--offspring-aggregation", "max", {"offspring-value", "offspring-value-imagenet"}),
+    ("--novelty-reference", "previous-parent", set(STRATEGIES) - {"random", "imagenet"}),
     ("--epsilon", "0", {"imagenet"}),
     ("--imagenet-model", "resnet18", {"imagenet", "novelty-imagenet", "offspring-value-imagenet"}),
     ("--comprehension-weight", "0.5", {"novelty-imagenet", "novelty-predictability", "offspring-value", "offspring-value-imagenet"}),

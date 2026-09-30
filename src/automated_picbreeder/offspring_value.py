@@ -34,8 +34,10 @@ class _FrozenOffspringValue:
     _quality_reference_name = 'comprehension_reference'
     _scoring_cost = {'masked_inputs_scored': 8 * 16}
 
-    def __init__(self, *, reference_mean, novelty_reference, quality_reference,
-                 selected_parent, origin_generation, comprehension_weight=.5):
+    def __init__(self, *, reference_image, novelty_reference, quality_reference,
+                 selected_parent, origin_generation, comprehension_weight=.5, offspring_aggregation='max'):
+        if offspring_aggregation not in ('max', 'mean'):
+            raise ValueError('offspring_aggregation must be max or mean.')
         if isinstance(origin_generation, bool) or not isinstance(origin_generation, Integral) or origin_generation < 1:
             raise ValueError('Origin generation must be >= 1; the initial grid has no informed value.')
         if (isinstance(comprehension_weight, bool) or not isinstance(comprehension_weight, Real)
@@ -44,24 +46,26 @@ class _FrozenOffspringValue:
         validate_image(selected_parent)
         if selected_parent.ndim != 3 or selected_parent.shape[-1] != 3:
             raise ValueError('Expected an RGB parent image.')
-        mean = np.asarray(reference_mean)
-        if (mean.shape != selected_parent.shape or mean.dtype.kind not in 'fiu'
-                or not np.isfinite(mean).all() or np.any((mean < 0) | (mean > 1))):
-            raise ValueError('Reference mean must match the RGB image shape and contain finite pixels in [0, 1].')
-        self._mean = mean.astype(np.float64, copy=True)
+        reference_image = np.asarray(reference_image)
+        if (reference_image.shape != selected_parent.shape or reference_image.dtype.kind not in 'fiu'
+                or not np.isfinite(reference_image).all() or np.any((reference_image < 0) | (reference_image > 1))):
+            raise ValueError('Reference image must match the RGB image shape and contain finite pixels in [0, 1].')
+        self._reference_image = reference_image.astype(np.float64, copy=True)
         self._novelty = _finite_vector(novelty_reference, name='Novelty reference', count=9)
         self._comprehension = _finite_vector(quality_reference, name='Quality reference', count=9)
         for reference in (self._novelty, self._comprehension):
             if np.any((reference < 0) | (reference > 1)):
                 raise ValueError('Reference measurements must be in [0, 1].')
             reference.flags.writeable = False
-        self._mean.flags.writeable = False
+        self._reference_image.flags.writeable = False
         self._weight = float(comprehension_weight)
+        self._offspring_aggregation = offspring_aggregation
         self._metadata = {
-            'target': 'mean_fixed_reference_offspring_value', 'version': 1,
+            'target': 'fixed_reference_offspring_value', 'version': 2,
+            'offspring_aggregation': offspring_aggregation,
             'origin_generation': int(origin_generation), 'reference_generation': int(origin_generation) - 1,
             'parent_image_hash': _image_hash(selected_parent),
-            'reference_mean_hash': _image_hash(self._mean),
+            'reference_image_hash': _image_hash(self._reference_image),
             'novelty_reference': self._novelty.tolist(),
             self._quality_reference_name: self._comprehension.tolist(),
             'comprehension_weight': self._weight,
@@ -77,10 +81,10 @@ class _FrozenOffspringValue:
             raise ValueError('Cannot score an empty image list.')
         for image in images:
             validate_image(image)
-            if image.shape != self._mean.shape:
+            if image.shape != self._reference_image.shape:
                 raise ValueError('Images must match the reference RGB shape.')
         pixels = np.stack(images).astype(np.float64) / 255
-        novelty = np.mean((pixels - self._mean) ** 2, axis=(1, 2, 3))
+        novelty = np.mean((pixels - self._reference_image) ** 2, axis=(1, 2, 3))
         comprehension = self._measure_quality(images, **measurement_options)
         novelty_rank = reference_ranks(novelty, self._novelty)
         comprehension_rank = reference_ranks(comprehension, self._comprehension)
@@ -90,15 +94,19 @@ class _FrozenOffspringValue:
                           self.describe() | {'image_hashes': [_image_hash(image) for image in images]})
 
     def evaluate_offspring(self, next_grid, **measurement_options):
-        """Return eight child rows and their mean, excluding the retained parent."""
+        """Return eight child rows and the configured aggregate, excluding the retained parent."""
         if len(next_grid) != 9:
             raise ValueError('Expected one retained parent followed by eight offspring.')
         validate_image(next_grid[0])
         if _image_hash(next_grid[0]) != self._metadata['parent_image_hash']:
             raise ValueError('Retained parent does not match the selected parent.')
         result = self.score(next_grid[1:], **measurement_options)
+        child_values = result.values[:, -1]
+        mean_value, max_value = float(child_values.mean()), float(child_values.max())
+        target = max_value if self._offspring_aggregation == 'max' else mean_value
         return Evaluation(result.values, result.names, result.metadata | {
-            'child_count': 8, 'mean_offspring_value': float(result.values[:, -1].mean()),
+            'child_count': 8, 'offspring_value': target,
+            'mean_offspring_value': mean_value, 'max_offspring_value': max_value,
             **self._scoring_cost,
         })
 
@@ -106,11 +114,12 @@ class _FrozenOffspringValue:
 class FrozenOffspringValue(_FrozenOffspringValue):
     """Selection-time references and an independent pre-update patch observer."""
 
-    def __init__(self, *, reference_mean, novelty_reference, comprehension_reference,
-                 observer, selected_parent, origin_generation, comprehension_weight=.5):
-        super().__init__(reference_mean=reference_mean, novelty_reference=novelty_reference,
+    def __init__(self, *, reference_image, novelty_reference, comprehension_reference,
+                 observer, selected_parent, origin_generation, comprehension_weight=.5, offspring_aggregation='max'):
+        super().__init__(reference_image=reference_image, novelty_reference=novelty_reference,
             quality_reference=comprehension_reference, selected_parent=selected_parent,
-            origin_generation=origin_generation, comprehension_weight=comprehension_weight)
+            origin_generation=origin_generation, comprehension_weight=comprehension_weight,
+            offspring_aggregation=offspring_aggregation)
         self._observer = observer.snapshot()
         self._metadata.update(observer_state_hash=self._observer.state_hash(),
                               observer=deepcopy(self._observer.describe()))
@@ -135,12 +144,13 @@ class FrozenImageNetOffspringValue(_FrozenOffspringValue):
     _quality_reference_name = 'confidence_reference'
     _scoring_cost = {'classifier_images_scored': 0, 'classifier_measurements_reused': 8}
 
-    def __init__(self, *, reference_mean, novelty_reference, confidence_reference,
-                 evaluator_metadata, selected_parent, origin_generation, comprehension_weight=.5):
-        super().__init__(reference_mean=reference_mean, novelty_reference=novelty_reference,
+    def __init__(self, *, reference_image, novelty_reference, confidence_reference,
+                 evaluator_metadata, selected_parent, origin_generation, comprehension_weight=.5, offspring_aggregation='max'):
+        super().__init__(reference_image=reference_image, novelty_reference=novelty_reference,
             quality_reference=confidence_reference, selected_parent=selected_parent,
-            origin_generation=origin_generation, comprehension_weight=comprehension_weight)
-        self._metadata.update(target='mean_fixed_reference_imagenet_offspring_value',
+            origin_generation=origin_generation, comprehension_weight=comprehension_weight,
+            offspring_aggregation=offspring_aggregation)
+        self._metadata.update(target='fixed_reference_imagenet_offspring_value',
                               evaluator=deepcopy(evaluator_metadata))
 
     def _measure_quality(self, images, *, confidence):

@@ -168,13 +168,13 @@
   }
   const groups = [
     ['Visual change',[['pixel_mse_previous','Previous selection'],['pixel_mse_nearest_earlier','Nearest earlier selection']], 'Full-resolution RGB MSE. A visually different image is not necessarily meaningful novelty.'],
-    ['Novelty',[['novelty_selected','Selected'],['novelty_grid_mean','Grid mean']], 'Strategy measurement against the previous grid mean; first grid unavailable.'],
+    ['Novelty',[['novelty_selected','Selected'],['novelty_grid_mean','Grid mean']], 'Strategy measurement against its configured previous grid mean or selected parent; first grid unavailable.'],
     ['Display novelty',[['display_novelty_selected','Selected'],['display_novelty_grid_mean','Grid mean']], 'Shared diagnostic against the previous display visit. Includes Back and reset visits.'],
     ['ImageNet confidence',[['imagenet_selected_confidence','Selected maximum'],['imagenet_grid_mean_confidence','Mean of candidate maxima']], 'Frozen classifier measurements used during selection.'],
     ['Post-run ImageNet',[['posthoc_imagenet_selected_confidence','Selected maximum'],['posthoc_imagenet_grid_mean_confidence','Mean of candidate maxima']], 'Separate post-run evaluation; these scores did not determine the recorded choices.'],
     ['Weighted value components',[['value_novelty_contribution','Novelty'],['value_quality_contribution','Quality'],['value_offspring_contribution','Offspring']], 'Actual weighted contributions to the selected score, including warm-up weights.'],
     ['Prediction error',[['prediction_mse_selected','Selected image'],['prediction_mse_grid_mean','Grid mean']], 'Masked prediction MSE measured before the current observer update.'],
-    ['Offspring value',[['offspring_forecast_selected','Forecast'],['offspring_target','Observed children']], 'Indexed by parent selection. Outcomes arrive at the next generation; final target is unobserved.'],
+    ['Offspring value',[['offspring_forecast_selected','Forecast'],['offspring_target','Observed children']], 'Configured max or mean of eight child values, indexed by parent selection. Outcomes arrive at the next generation; final target is unobserved.'],
     ['Forecast accuracy',[['offspring_cumulative_rmse','Predictor'],['offspring_running_mean_cumulative_rmse','Running-mean baseline'],['offspring_current_value_cumulative_rmse','Current-value baseline']], 'Cumulative RMSE on observed eligible selected-parent transitions only.'],
     ['Exploratory choices',[['exploratory_choice','Random-choice event'],['exploratory_choice_frequency','Cumulative frequency']], 'A random choice still counts when it happens to select the greedy winner.'],
     ['Time per selection',[['rendering_seconds','Rendering'],['selection_seconds','Strategy'],['saving_seconds','Saving']], 'Host wall time. Strategy time includes inference and training; nested timing metrics are not additive.'],

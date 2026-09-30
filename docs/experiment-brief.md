@@ -15,6 +15,10 @@ existing automated and human sessions without model inference.
 Pixel novelty, online image predictability and offspring-value prediction use the
 same breeding loop. Their observers and predictors are separate from the CPPNs
 being evolved; observer learning and pixel diversity are not UFR evidence.
+The patch-based strategies use a fixed 96x96 reconstruction observer with sixteen
+24x24 masks, matching the default rendered image resolution. Other rendered sizes
+are resized to 96x96. The [resolution report](observer-resolution.md) records the
+compute cost and hidden-region prediction task implications.
 The representation study below retains its scientific objective.
 
 Test whether classifier-guided selection in a Picbreeder-style breeding loop can produce compositional pattern-producing networks (CPPNs) with evidence of **unified factored representations (UFR)**, as described by Kumar et al. [1].
@@ -45,7 +49,7 @@ The implemented runner uses the same candidate-generation and selection opportun
 Use the same shared breeding implementation for the notebook and automated runner, with matched initialization, rendering and mutation settings. The runner makes selection decisions only: it does not exercise the notebook's optional backtracking or reset controls. In the greedy condition, exact score ties retain the parent, and a fixed deterministic scoring function cannot select a lower-scoring image. Exploratory choices can. A finite sequence of selections is one run; its length includes the initial random-grid choice. The runner uses a separate, recorded selection RNG seed so exploration draws do not alter mutation draws.
 
 `NoveltyImageNetSelectionStrategy(comprehension_weight=0.5)` combines the existing
-previous-grid pixel novelty rank with the frozen maximum class-confidence rank.
+configured-reference pixel novelty rank with the frozen maximum class-confidence rank.
 It selects the first maximum of `(1-weight)*novelty_rank + weight*confidence_rank`.
 Confidence is available on the first grid, when novelty ranks are neutral; weight
 zero instead preserves novelty's uniform first choice. Weight zero matches novelty
@@ -56,20 +60,30 @@ This tests classification confidence as an alternative to patch predictability,
 not as a validated comprehension measure. Intermediate weights can select a lower
 confidence image in exchange for higher novelty.
 
+All five novelty strategies offer `previous-grid-mean` (default) or
+`previous-parent` references. The latter measures distance to the preceding
+choice's selected image; neither implements historical novelty selection.
+Both offspring strategies aggregate eight fixed-reference child values with
+`max` (new default) or `mean`. Max predicts the expected best immediate child
+value, while mean predicts average child value; neither measures long-term
+potential or diversity. Existing saved mean runs retain their original meaning.
+See the [strategy guides](../README.md#automated-selection-experiments) for exact
+options, warm-up schedules and runnable examples.
+
 `OffspringValueImageNetSelectionStrategy` extends that value function with the
-same predicted-mean-offspring term as the patch-based offspring strategy. It
+same predicted-offspring-value term as the patch-based offspring strategy. It
 trains a separate scratch predictor on actual selected-parent transitions, using
-the parent's selection-time novelty mean and nine novelty/confidence references
+the parent's selection-time active novelty reference image and nine novelty/confidence references
 to score its eight children. The classifier remains frozen; current-grid
 confidence measurements also supply the child targets. The first transition is
 ineligible because its parent was selected without a novelty reference; the last
 parent has no observed children. With `S` decisions there are `max(S-2, 0)` targets
 and `9*S` classifier evaluations. After ten completed targets by default, select
-using `current_value + gamma * predicted_mean_offspring_value`. Gamma zero trains
+using `current_value + gamma * predicted_offspring_value`. Gamma zero trains
 and logs while preserving novelty-imagenet choices. This is an implemented
 experimental condition, not evidence of improved offspring value or UFR.
 
-ImageNet selection uses class confidence as a candidate proxy for recognisability/human preference, not a validated measure of naturalness or interestingness. The random condition has no such preference. These implemented conditions do not use a vision-language model (VLM) or an image-reconstruction objective.
+ImageNet selection uses class confidence as a candidate proxy for recognisability/human preference, not a validated measure of naturalness or interestingness. The random condition has no such preference. The ImageNet conditions do not use a vision-language model (VLM) or an image-reconstruction objective; the patch-based strategies do train an image-reconstruction observer.
 
 Both human and automated experiments now use three mutable CPPN outputs ordered hue, saturation and brightness (HSB/HSV), converted by the shared renderer to RGB using Picbreeder-VLM’s mapping: hue wraps modulo one, saturation clips to [0, 1], and brightness takes its absolute value then clips to [0, 1]. RGB bytes use half-up rounding. Coordinates, mutation rates, mutation strength and the parent-plus-eight-offspring loop are unchanged. This adopts HSB colour semantics without Picbreeder-VLM’s custom reproduction or colour/brightness subnetworks. Earlier experimental rendering conventions are not supported. Activation-function definitions remain those of our NEAT-Python configuration, without Picbreeder-VLM’s extra output transforms.
 

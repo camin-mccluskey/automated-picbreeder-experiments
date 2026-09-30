@@ -12,9 +12,9 @@ Read [docs/experiment-brief.md](docs/experiment-brief.md) for the scientific obj
 
 - Begin with nine random CPPNs. Select one parent, retain it unchanged in the first position, and generate eight independently mutated offspring. Repeat.
 - Human selection happens in the notebook. Automated runs accept one `SelectionStrategy`: random, pixel novelty, novelty-imagenet, novelty-predictability, offspring-value, offspring-value-imagenet or ImageNet.
-- Novelty selects uniformly on the first grid, then maximizes full-resolution pixel MSE from the previous displayed grid's mean image. All previous candidates contribute equally, including duplicates. It records raw distance and percentile-rank scores, requires no Torch, and retains state: construct a fresh instance for each run/inspection.
+- Novelty selects uniformly on the first grid, then maximizes full-resolution pixel MSE from `novelty_reference`: `previous-grid-mean` (default) or `previous-parent` (the preceding choice's selected image). In previous-grid-mean mode, all previous candidates contribute equally, including duplicates. It records raw distance and percentile-rank scores, requires no Torch, and retains state: construct a fresh instance for each run/inspection.
 - `NoveltyImageNetSelectionStrategy` combines the same novelty ranks with frozen maximum ImageNet class-confidence ranks, using `comprehension_weight=0.5` by default. The first grid has neutral novelty; positive weights choose by confidence immediately, while weight zero preserves novelty's random first choice. No training or warm-up. Weight one matches greedy ImageNet choices. Classify all nine images every decision, including at weight zero. Store two measurements plus both ranks and full classifier output/provenance in `evaluation.metadata.classifier_evaluation`. Create a fresh strategy per run.
-- `NoveltyPredictabilitySelectionStrategy` combines novelty and masked-pixel accuracy ranks. Random/pretrained ResNet18 observers share architecture and head initialization, train online on all distinct displayed images after the choice, and run on CPU by default or MPS explicitly. Initialization and sampling remain on CPU. First-grid comprehension is unavailable. The existing RNG supplies model/update seeds; evaluation metadata carries replay/training records and model hashes. These are not resumable model checkpoints.
+- `NoveltyPredictabilitySelectionStrategy` combines novelty and masked-pixel accuracy ranks. Random/pretrained ResNet18 observers share architecture and head initialization, train online on all distinct displayed images after the choice, and run on CPU by default or MPS explicitly. Initialization and sampling remain on CPU. Observers use a fixed 96x96 input/output with sixteen 24x24 masks. Other rendered image sizes are resized to 96x96; there is no observer-resolution option. First-grid comprehension is unavailable. The existing RNG supplies model/update seeds; evaluation metadata carries replay/training records and model hashes. These are not resumable model checkpoints.
 - Random selection is uniform over all nine candidates, including the parent, and performs no inference. ImageNet selection scores each candidate by its maximum class probability and chooses the first maximum, except that with probability epsilon it chooses uniformly instead. Classes may change; greedy ties retain the parent after initialization. Epsilon is in [0, 1], with 0 greedy and 1 always random but still evaluated.
 - Both paths use the same breeding and rendering code. When comparing selection strategies, match seeds, image sizes, mutation settings and decision budgets; report classifier cost separately. Human backtracking, resets or parameter adjustments introduce additional differences. Matching seeds does not keep choice sets identical after selections diverge.
 - Use NEAT-Python's genomes and mutation operators, not its full population/speciation/crossover algorithm. There is currently no crossover or MAP-Elites archive.
@@ -23,9 +23,9 @@ Read [docs/experiment-brief.md](docs/experiment-brief.md) for the scientific obj
 
 `OffspringValueSelectionStrategy` predicts offspring value, using the same complete
 strategy interface. Its scalar predictor starts from scratch, trains on completed
-selected-parent transitions, and predicts mean child value from parent pixels and
+selected-parent transitions, and predicts max child value by default (`offspring_aggregation="mean"` is optional) from parent pixels and
 scoring context. The separate comprehension observer also starts from scratch.
-`FrozenOffspringValue` uses the selection-time observer, mean image and nine rank
+`FrozenOffspringValue` uses the selection-time observer, active novelty reference image and nine rank
 references to score the eight actual children; exclude the retained parent and
 count duplicate children individually. Both observer strategies default to ten
 comprehension warm-up decisions: first random, then novelty-only selection, with
@@ -48,7 +48,7 @@ invent rejected-parent labels. CPU/MPS replay is tested within one environment.
 `OffspringValueImageNetSelectionStrategy` shares the offspring loop, predictor and
 fixed-reference target calculations, using novelty-imagenet current values.
 Only its offspring predictor trains; no patch observer or comprehension warm-up.
-Keep the selection-time previous-grid mean and nine novelty/confidence references
+Keep the selection-time active novelty reference image and nine novelty/confidence references
 for scoring the eight actual children. Reuse confidence from the next grid's one
 classifier pass; all nine images are classified once per decision, including at
 gamma zero. Gamma zero must preserve novelty-imagenet choices and selection RNG
@@ -57,6 +57,17 @@ drawing from it. Predictor context has 21 scalars (the patch version retains its
 23, including observer training statistics). First transition ineligible, final
 parent unobserved: max(S-2,0) targets. Ten targets precede forecast-driven selection
 by default, so decision 12 can first use forecasts. CPU/MPS predictor only.
+
+All five novelty strategies accept `novelty_reference="previous-grid-mean"` or
+`"previous-parent"`; store the actual final selected image for the next decision,
+including forecast-driven choices. The first grid has no reference in either mode.
+Both offspring strategies accept `offspring_aggregation="max"` (new-run default)
+or `"mean"`. Apply that aggregation to eight actual child values under the frozen
+selection-time references; do not label maxima as means. Max forecasts the expected
+best value of an eight-child brood. Existing saved mean runs retain their meaning
+and are not rewritten. Derived `display_novelty` always uses the previous displayed
+grid mean; it differs from strategy `pixel_novelty` in previous-parent mode.
+History-based novelty selection is deferred.
 
 ## Code structure
 
@@ -137,6 +148,20 @@ relative paths, and no server/CDN is required. Keep missing values as gaps, repo
 failure status, and preserve chronological clicks, display visits and actual
 ancestry as separate views. The viewer is read-only; it cannot influence breeding.
 
+## Strategy documentation
+
+Keep README.md short and link to one guide per strategy in `docs/strategies/`.
+When changing a strategy, constructor, CLI option or default, update its guide and
+the linked shared option tables (`docs/strategies/options.md`, `docs/run-options.md`)
+in the same change. Document every applicable option, default, constraint, Python
+mapping and scientific limitation. Terminal examples must run long enough for the
+advertised mechanism to affect selection; label shorter runs as smoke tests or
+explain explicit warm-up overrides. Check examples against the parser and keep
+`tests/test_strategy_docs.py` passing. Preserve useful notebook, export and
+interpretation instructions in `docs/usage.md`, and update the experiment brief
+and metric definitions when semantics change. Historical plan documents describe
+their original design and must not be silently rewritten as current API guides.
+
 ## Development and verification
 
 Python 3.13+, managed with `uv`; dependencies are locked in `uv.lock`, with NEAT-Python pinned to 2.0.0. From the repository root:
@@ -149,7 +174,7 @@ uv run --extra imagenet python experiments/run_selection.py imagenet --epsilon 0
 uv run --extra imagenet pytest
 ```
 
-The ImageNet extra is optional for human, pure random and novelty selection. Include `--extra imagenet` in uv commands that need Torch. Classifier unit tests use controlled models and do not download weights; a real classifier smoke run may download the checkpoint into `.cache/imagenet`. Run all automated experiments through `experiments/run_selection.py`. Put the strategy subcommand before all options. Top-level help lists strategies; `STRATEGY --help` lists only applicable options; epsilon is only valid for ImageNet selection; device applies to strategies using a model. `--imagenet-model`, `--imagenet-weights` and `--imagenet-batch-size` configure the frozen evaluator for imagenet, novelty-imagenet and offspring-value-imagenet; `--cache-dir` sets model weight storage. `--comprehension-weight` applies to all combined novelty strategies. Predictor options apply to offspring-value and offspring-value-imagenet. Observer training/warm-up options apply only to novelty-predictability and offspring-value; the latter requires a scratch observer. Observer/predictor devices are cpu/mps; use --device mps on Apple Silicon. For offspring-value-imagenet, CLI device configures both classifier and predictor; Python strategy device configures the predictor, with classifier device supplied through its evaluator.
+The ImageNet extra is optional for human, pure random and novelty selection. Include `--extra imagenet` in uv commands that need Torch. Classifier unit tests use controlled models and do not download weights; a real classifier smoke run may download the checkpoint into `.cache/imagenet`. Run all automated experiments through `experiments/run_selection.py`. Put the strategy subcommand before all options. Top-level help lists strategies; `STRATEGY --help` lists only applicable options; epsilon is only valid for ImageNet selection; device applies to strategies using a model. `--imagenet-model`, `--imagenet-weights` and `--imagenet-batch-size` configure the frozen evaluator for imagenet, novelty-imagenet and offspring-value-imagenet; `--cache-dir` sets model weight storage. `--novelty-reference` applies to all five novelty strategies; `--offspring-aggregation` applies only to the two offspring strategies. `--comprehension-weight` applies to all combined novelty strategies. Predictor options apply to offspring-value and offspring-value-imagenet. Patch observers use fixed 96x96 inputs with sixteen 24x24 masks, including notebooks 05 and 07. Observer training/warm-up options apply only to novelty-predictability and offspring-value; the latter requires a scratch observer. Observer/predictor devices are cpu/mps; use --device mps on Apple Silicon. For offspring-value-imagenet, CLI device configures both classifier and predictor; Python strategy device configures the predictor, with classifier device supplied through its evaluator.
 
 For changes affecting breeding, rendering or saving, check deterministic replay between human and automated paths, unchanged parents, output mapping, complete records and saved-image reproduction. Preserve the user's notebook seeds and exploratory settings unless the requested change requires otherwise. Check actual notebook/CLI settings rather than assuming they match.
 

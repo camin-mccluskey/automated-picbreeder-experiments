@@ -100,10 +100,16 @@ def _image_hash(image: ImageArray) -> str:
     return digest.hexdigest()
 
 
-class NoveltySelectionStrategy:
-    """Prefer pixel distance from the preceding grid's mean image.
+def _validate_novelty_reference(novelty_reference):
+    if novelty_reference not in ("previous-grid-mean", "previous-parent"):
+        raise ValueError("novelty_reference must be previous-grid-mean or previous-parent.")
 
-    Every displayed image contributes equally to the mean, including duplicates.
+
+class NoveltySelectionStrategy:
+    """Prefer pixel distance from the preceding grid mean or selected parent.
+
+    The default mean weights every displayed image equally, including duplicates.
+    Previous-parent mode uses the preceding choice's actual selected image.
     Scores are average-tie percentile ranks of RGB/grayscale mean squared distance
     in [0, 1]. The first grid has no reference and is selected uniformly. Later
     ties favour the first candidate. No model, resizing or cropping is involved.
@@ -112,8 +118,10 @@ class NoveltySelectionStrategy:
     notebook inspection. Image shapes must stay constant within an instance.
     """
 
-    def __init__(self):
-        self._previous_mean = None
+    def __init__(self, *, novelty_reference="previous-grid-mean"):
+        _validate_novelty_reference(novelty_reference)
+        self.novelty_reference = novelty_reference
+        self._reference_image = None
         self._generation = 0
         self._seen_hashes: set[str] = set()
 
@@ -122,28 +130,30 @@ class NoveltySelectionStrategy:
             raise ValueError("Cannot select from an empty candidate grid.")
         for image in images:
             validate_image(image)
-        shape = images[0].shape if self._previous_mean is None else self._previous_mean.shape
+        shape = images[0].shape if self._reference_image is None else self._reference_image.shape
         if any(image.shape != shape for image in images):
             raise ValueError("Image shape must stay the same within a strategy instance.")
 
         # Convert before arithmetic to prevent uint8 subtraction/summation overflow.
         pixels = np.stack(images).astype(np.float64) / 255
-        available = self._previous_mean is not None
-        novelty = (np.mean((pixels - self._previous_mean) ** 2, axis=tuple(range(1, pixels.ndim)))
+        available = self._reference_image is not None
+        novelty = (np.mean((pixels - self._reference_image) ** 2, axis=tuple(range(1, pixels.ndim)))
                    if available else np.zeros(len(images)))
         hashes = [_image_hash(image) for image in images]
         metadata = {
             "generation": self._generation,
             "reference_generation": self._generation - 1 if available else None,
             "reference_available": available,
+            "novelty_reference": self.novelty_reference,
             "measurement_available": [available],
             "image_hashes": hashes,
             "seen_before": [key in self._seen_hashes for key in hashes],
         }
         return pixels, novelty, metadata
 
-    def _remember(self, pixels, hashes):
-        self._previous_mean = pixels.mean(axis=0)
+    def _remember(self, pixels, hashes, position):
+        self._reference_image = (pixels.mean(axis=0) if self.novelty_reference == "previous-grid-mean"
+                                 else pixels[position].copy())
         self._seen_hashes.update(hashes)
         self._generation += 1
 
@@ -157,14 +167,17 @@ class NoveltySelectionStrategy:
             evaluation=Evaluation(novelty[:, None], ("pixel_novelty",), metadata), scores=scores,
         )
         # Advance only after the whole grid has been scored against one reference.
-        self._remember(pixels, metadata["image_hashes"])
+        self._remember(pixels, metadata["image_hashes"], decision.position)
         return decision
 
     def describe(self) -> dict:
         return {
             "selection_strategy": "novelty", "version": 1,
-            "measurement": "mean squared pixel distance from the previous displayed grid's mean image",
-            "reference": "all previous-grid images equally weighted, including duplicates; replaced each decision",
+            "novelty_reference": self.novelty_reference,
+            "measurement": "mean squared pixel distance from the configured preceding-decision reference image",
+            "reference": ("all previous-grid images equally weighted, including duplicates; replaced each decision"
+                          if self.novelty_reference == "previous-grid-mean"
+                          else "actual image selected on the previous decision; replaced each decision"),
             "preprocessing": "full-resolution uint8 pixels converted to float64 and divided by 255; no crop or resize",
             "score": "ascending percentile ranks with average ties; singleton and all ties score 0.5",
             "rule": "uniform first choice (no reference); otherwise first maximum score",
@@ -182,10 +195,11 @@ class NoveltyImageNetSelectionStrategy(NoveltySelectionStrategy):
     is needed. Construct a fresh strategy per run to reset the novelty reference.
     """
 
-    def __init__(self, comprehension_weight=.5, *, evaluator: "ImageNetEvaluator | None" = None):
+    def __init__(self, comprehension_weight=.5, *, evaluator: "ImageNetEvaluator | None" = None,
+                 novelty_reference="previous-grid-mean"):
         if isinstance(comprehension_weight, bool) or not isinstance(comprehension_weight, Real) or not 0 <= comprehension_weight <= 1:
             raise ValueError("comprehension_weight must be in [0, 1].")
-        super().__init__()
+        super().__init__(novelty_reference=novelty_reference)
         self.comprehension_weight = float(comprehension_weight)
         if evaluator is None:
             from .imagenet import ImageNetEvaluator
@@ -225,7 +239,7 @@ class NoveltyImageNetSelectionStrategy(NoveltySelectionStrategy):
                                   ("pixel_novelty", "imagenet_confidence"), metadata),
             scores=scores,
         )
-        self._remember(pixels, metadata["image_hashes"])
+        self._remember(pixels, metadata["image_hashes"], position)
         return decision
 
     def describe(self):
@@ -247,7 +261,8 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
     """
 
     def __init__(self, comprehension_weight=.5, *, comprehension_warmup_steps=10, observer_initialization="random",
-                 training_steps=20, batch_size=16, learning_rate=.001, cache_dir=None, device="cpu"):
+                 training_steps=20, batch_size=16, learning_rate=.001, cache_dir=None, device="cpu",
+                 novelty_reference="previous-grid-mean"):
         if isinstance(comprehension_weight, bool) or not isinstance(comprehension_weight, Real) or not 0 <= comprehension_weight <= 1:
             raise ValueError("comprehension_weight must be in [0, 1].")
         if observer_initialization not in ("random", "imagenet"):
@@ -258,7 +273,7 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
                 raise ValueError(f"{name} must be an integer >= {minimum}.")
         if isinstance(learning_rate, bool) or not isinstance(learning_rate, Real) or not np.isfinite(learning_rate) or learning_rate <= 0:
             raise ValueError("learning_rate must be positive and finite.")
-        super().__init__()
+        super().__init__(novelty_reference=novelty_reference)
         from .image_predictability import MaskedImageObserver
 
         self.comprehension_weight = float(comprehension_weight)
@@ -304,7 +319,7 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
         })
         return pixels, novelty, comprehension, scores, position, metadata
 
-    def _update_observer(self, images, pixels, metadata, rng):
+    def _update_observer(self, images, pixels, metadata, rng, position):
         replay_before = len(self._replay)
         for key, image in zip(metadata["image_hashes"], images, strict=True):
             if key not in self._replay:
@@ -319,11 +334,11 @@ class NoveltyPredictabilitySelectionStrategy(NoveltySelectionStrategy):
             "replay_size_after": len(self._replay), "update_seed": seed, "training": update,
             "training_seconds": time.perf_counter() - start,
         })
-        self._remember(pixels, metadata["image_hashes"])
+        self._remember(pixels, metadata["image_hashes"], position)
 
     def choose(self, images: Sequence[ImageArray], *, rng: Random) -> SelectionDecision:
         pixels, novelty, comprehension, scores, position, metadata = self._score_current(images, rng)
-        self._update_observer(images, pixels, metadata, rng)
+        self._update_observer(images, pixels, metadata, rng, position)
         return SelectionDecision(position=position, mode="greedy" if metadata["reference_available"] else "random",
             evaluation=Evaluation(np.column_stack((novelty, comprehension)),
                                   ("pixel_novelty", "comprehension"), metadata), scores=scores)
@@ -347,9 +362,11 @@ class _OffspringValueMixin:
     callers still configure one complete SelectionStrategy.
     """
 
-    def __init__(self, *, gamma=1., warmup_targets=10,
+    def __init__(self, *, gamma=1., warmup_targets=10, offspring_aggregation="max",
                  predictor_training_steps=10, predictor_batch_size=16, predictor_learning_rate=.001,
                  predictor_device="cpu", predictor_value_source="predictability", **value_options):
+        if offspring_aggregation not in ("max", "mean"):
+            raise ValueError("offspring_aggregation must be max or mean.")
         for name, value, minimum in (("warmup_targets", warmup_targets, 1),
                 ("predictor_training_steps", predictor_training_steps, 1),
                 ("predictor_batch_size", predictor_batch_size, 1)):
@@ -360,10 +377,13 @@ class _OffspringValueMixin:
         if (isinstance(predictor_learning_rate, bool) or not isinstance(predictor_learning_rate, Real)
                 or not np.isfinite(predictor_learning_rate) or predictor_learning_rate <= 0):
             raise ValueError("predictor_learning_rate must be positive and finite.")
+        _validate_novelty_reference(value_options.get("novelty_reference", "previous-grid-mean"))
         from .offspring_prediction import OffspringValuePredictor
         self.predictor = OffspringValuePredictor(learning_rate=predictor_learning_rate,
-            device=predictor_device, value_source=predictor_value_source)
+            device=predictor_device, value_source=predictor_value_source,
+            offspring_aggregation=offspring_aggregation)
         super().__init__(**value_options)
+        self.offspring_aggregation = offspring_aggregation
         self.gamma, self.warmup_targets = float(gamma), warmup_targets
         self.predictor_training_steps, self.predictor_batch_size = predictor_training_steps, predictor_batch_size
         self._predictor_seed = None
@@ -378,7 +398,7 @@ class _OffspringValueMixin:
         start = time.perf_counter()
         observed = pending["target_context"].evaluate_offspring(images, **measurement_options)
         target_seconds = time.perf_counter() - start
-        target = observed.metadata["mean_offspring_value"]
+        target = observed.metadata["offspring_value"]
         record = pending["record"]
         feedback = record | {
             "received_generation": self._generation, "target": target,
@@ -411,7 +431,7 @@ class _OffspringValueMixin:
             validate_image(image)
             if image.ndim != 3 or image.shape[-1] != 3 or image.shape != images[0].shape:
                 raise ValueError("Expected nine matching RGB image shapes.")
-            if self._previous_mean is not None and image.shape != self._previous_mean.shape:
+            if self._reference_image is not None and image.shape != self._reference_image.shape:
                 raise ValueError("Image shape changed during a chronological run.")
         if self._expected_parent_hash is not None and _image_hash(images[0]) != self._expected_parent_hash:
             raise ValueError("Retained parent does not match the previous selected parent.")
@@ -429,7 +449,7 @@ class _OffspringValueMixin:
         inference_seconds = snapshot_seconds = 0.
         if available:
             contexts = self._prediction_context(novelty, comprehension, current)
-            inputs = self.predictor.prepare(images, self._previous_mean, contexts)
+            inputs = self.predictor.prepare(images, self._reference_image, contexts)
             start = time.perf_counter()
             forecasts = np.asarray(self.predictor.predict(inputs), dtype=np.float64)
             inference_seconds = time.perf_counter() - start
@@ -449,7 +469,9 @@ class _OffspringValueMixin:
             pending_record = {
                 "origin_generation": self._generation, "selected_position": position,
                 "parent_image_hash": metadata["image_hashes"][position],
-                "reference_mean_hash": frozen.describe()["reference_mean_hash"],
+                "reference_image_hash": frozen.describe()["reference_image_hash"],
+                "offspring_aggregation": self.offspring_aggregation,
+                "novelty_reference": self.novelty_reference,
                 "forecast": float(forecasts[position]), "forecast_used": used,
                 "predictor_state_hash": predictor_state, "context": contexts[position].tolist(),
                 "current_value": float(current[position]),
@@ -460,6 +482,7 @@ class _OffspringValueMixin:
             self._pending = {"record": pending_record, "inputs": inputs[position], "target_context": frozen}
         self._expected_parent_hash = metadata["image_hashes"][position]
         metadata["offspring"] = {
+            "offspring_aggregation": self.offspring_aggregation,
             "forecasts": forecasts.tolist(), "forecast_available": bool(available), "forecast_used": used,
             "gamma": self.gamma, "warmup_targets": self.warmup_targets, "warmup_complete": ready,
             "completed_targets": len(self._transitions), "replay_size": len(self._transitions),
@@ -473,7 +496,7 @@ class _OffspringValueMixin:
             **self._target_cost(feedback),
         }
         metadata["offspring"] = deepcopy(metadata["offspring"])
-        self._finish_grid(images, pixels, metadata, rng)
+        self._finish_grid(images, pixels, metadata, rng, position)
         metadata["measurement_available"] += [self._current_value_available(metadata), bool(available)]
         return SelectionDecision(position, self._selection_mode(metadata),
             Evaluation(np.column_stack((novelty, comprehension, current, forecasts)),
@@ -481,7 +504,8 @@ class _OffspringValueMixin:
 
     def describe(self):
         return super().describe() | {
-            "score": "current_value + gamma*predicted_mean_offspring_value after warmup; otherwise current_value",
+            "score": "current_value + gamma*predicted_offspring_value after warmup; otherwise current_value",
+            "offspring_aggregation": self.offspring_aggregation,
             "gamma": self.gamma, "warmup_targets": self.warmup_targets,
             "predictor": self.predictor.describe(), "predictor_training_steps": self.predictor_training_steps,
             "predictor_batch_size": self.predictor_batch_size,
@@ -490,20 +514,23 @@ class _OffspringValueMixin:
 
 
 class OffspringValueSelectionStrategy(_OffspringValueMixin, NoveltyPredictabilitySelectionStrategy):
-    """Predict mean child value under selection-time patch predictability and novelty."""
+    """Predict max or mean child value under selection-time predictability and novelty."""
 
     _quality_name = "comprehension"
 
     def __init__(self, comprehension_weight=.5, *, comprehension_warmup_steps=10, gamma=1., warmup_targets=10,
+                 offspring_aggregation="max",
                  predictor_training_steps=10, predictor_batch_size=16, predictor_learning_rate=.001,
                  observer_initialization="random", training_steps=20, batch_size=16,
-                 learning_rate=.001, cache_dir=None, device="cpu"):
+                 learning_rate=.001, cache_dir=None, device="cpu", novelty_reference="previous-grid-mean"):
         if observer_initialization != "random":
             raise ValueError("offspring-value uses a scratch observer; observer_initialization must be random.")
         super().__init__(comprehension_weight=comprehension_weight, comprehension_warmup_steps=comprehension_warmup_steps,
+            novelty_reference=novelty_reference,
             observer_initialization=observer_initialization, training_steps=training_steps, batch_size=batch_size,
             learning_rate=learning_rate, cache_dir=cache_dir, device=device, predictor_device=device,
-            gamma=gamma, warmup_targets=warmup_targets, predictor_training_steps=predictor_training_steps,
+            gamma=gamma, warmup_targets=warmup_targets, offspring_aggregation=offspring_aggregation,
+            predictor_training_steps=predictor_training_steps,
             predictor_batch_size=predictor_batch_size, predictor_learning_rate=predictor_learning_rate)
 
     def _predictor_run_seed(self, purpose, generation):
@@ -525,16 +552,16 @@ class OffspringValueSelectionStrategy(_OffspringValueMixin, NoveltyPredictabilit
     def _freeze_target(self, novelty, comprehension, selected_parent):
         from .offspring_value import FrozenOffspringValue
 
-        return FrozenOffspringValue(reference_mean=self._previous_mean,
+        return FrozenOffspringValue(reference_image=self._reference_image,
             novelty_reference=novelty, comprehension_reference=comprehension, observer=self.observer,
             selected_parent=selected_parent, origin_generation=self._generation,
-            comprehension_weight=self.comprehension_weight)
+            comprehension_weight=self.comprehension_weight, offspring_aggregation=self.offspring_aggregation)
 
     def _target_cost(self, feedback):
         return {"target_masked_inputs_scored": 128 if feedback is not None else 0}
 
-    def _finish_grid(self, images, pixels, metadata, rng):
-        self._update_observer(images, pixels, metadata, rng)
+    def _finish_grid(self, images, pixels, metadata, rng, position):
+        self._update_observer(images, pixels, metadata, rng, position)
 
     def _current_value_available(self, metadata):
         return bool(metadata["reference_available"])
@@ -544,24 +571,26 @@ class OffspringValueSelectionStrategy(_OffspringValueMixin, NoveltyPredictabilit
 
     def describe(self):
         return super().describe() | {
-            "selection_strategy": "offspring-value", "version": 1,
+            "selection_strategy": "offspring-value", "version": 2,
             "predictor_replay": "completed transitions from parents selected after comprehension warmup, in chronological order; no deduplication or relabeling",
             "seed_derivation": "SHA256 ASCII offspring-value-v1:{observer_seed}:{initialize|update}:{generation}; first eight bytes big-endian masked to 63 bits",
-            "target": "mean eight actual children under selection-time frozen observer, previous-grid mean and nine fixed rank references",
+            "target": f"{self.offspring_aggregation} value of eight actual children under selection-time frozen observer, configured reference image and nine fixed rank references",
             "missing_targets": "first grid and parents selected during comprehension warmup ineligible; final selection unobserved; max(S-max(comprehension_warmup_steps,1)-1,0) targets",
         }
 
 
 class OffspringValueImageNetSelectionStrategy(_OffspringValueMixin, NoveltyImageNetSelectionStrategy):
-    """Predict mean child value under fixed ImageNet confidence and local novelty."""
+    """Predict max or mean child value under fixed ImageNet confidence and novelty."""
 
     _quality_name = "imagenet_confidence"
 
     def __init__(self, comprehension_weight=.5, *, evaluator: "ImageNetEvaluator | None" = None,
-                 gamma=1., warmup_targets=10, predictor_training_steps=10, predictor_batch_size=16,
-                 predictor_learning_rate=.001, device="cpu"):
+                 gamma=1., warmup_targets=10, offspring_aggregation="max", predictor_training_steps=10, predictor_batch_size=16,
+                 predictor_learning_rate=.001, device="cpu", novelty_reference="previous-grid-mean"):
         super().__init__(comprehension_weight=comprehension_weight, evaluator=evaluator,
-            gamma=gamma, warmup_targets=warmup_targets, predictor_training_steps=predictor_training_steps,
+            novelty_reference=novelty_reference,
+            gamma=gamma, warmup_targets=warmup_targets, offspring_aggregation=offspring_aggregation,
+            predictor_training_steps=predictor_training_steps,
             predictor_batch_size=predictor_batch_size, predictor_learning_rate=predictor_learning_rate,
             predictor_device=device, predictor_value_source="imagenet")
         self._seed_material = None
@@ -587,17 +616,17 @@ class OffspringValueImageNetSelectionStrategy(_OffspringValueMixin, NoveltyImage
     def _freeze_target(self, novelty, confidence, selected_parent):
         from .offspring_value import FrozenImageNetOffspringValue
 
-        return FrozenImageNetOffspringValue(reference_mean=self._previous_mean,
+        return FrozenImageNetOffspringValue(reference_image=self._reference_image,
             novelty_reference=novelty, confidence_reference=confidence, evaluator_metadata=self.evaluator.describe(),
             selected_parent=selected_parent, origin_generation=self._generation,
-            comprehension_weight=self.comprehension_weight)
+            comprehension_weight=self.comprehension_weight, offspring_aggregation=self.offspring_aggregation)
 
     def _target_cost(self, feedback):
         return {"target_classifier_images_scored": 0,
                 "target_classifier_measurements_reused": 8 if feedback is not None else 0}
 
-    def _finish_grid(self, images, pixels, metadata, rng):
-        self._remember(pixels, metadata["image_hashes"])
+    def _finish_grid(self, images, pixels, metadata, rng, position):
+        self._remember(pixels, metadata["image_hashes"], position)
 
     def _current_value_available(self, metadata):
         return True
@@ -607,10 +636,10 @@ class OffspringValueImageNetSelectionStrategy(_OffspringValueMixin, NoveltyImage
 
     def describe(self):
         return super().describe() | {
-            "selection_strategy": "offspring-value-imagenet", "version": 1,
+            "selection_strategy": "offspring-value-imagenet", "version": 2,
             "predictor_replay": "all completed eligible selected-parent transitions in chronological order; no deduplication or relabeling",
             "seed_derivation": "seed_material=SHA256 ASCII repr(initial selection RNG state); SHA256 ASCII offspring-value-imagenet-v1:{seed_material}:{initialize|update}:{generation}; first eight bytes big-endian masked to 63 bits; no RNG draws",
-            "target": "mean eight actual children under frozen classifier and selection-time previous-grid mean and nine fixed rank references",
+            "target": f"{self.offspring_aggregation} value of eight actual children under frozen classifier and selection-time configured reference image and nine fixed rank references",
             "missing_targets": "first grid ineligible; final selection unobserved; max(S-2,0) targets",
         }
 

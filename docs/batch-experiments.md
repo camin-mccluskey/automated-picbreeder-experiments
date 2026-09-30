@@ -281,7 +281,9 @@ are unavailable on root grids. `display_novelty` also has grid mean/min/max fiel
 and candidate values; it is unavailable only on the first display, and uses the
 previous display visit (including Back/reset/unselected grids) for human sessions.
 Reselecting on one grid keeps its reference fixed. On normal automated runs it
-matches the strategy's raw novelty when that strategy records novelty.
+matches recorded strategy `pixel_novelty` only for `previous-grid-mean` selection.
+With `previous-parent`, strategy novelty uses the preceding selected image while
+`display_novelty` continues using the previous displayed grid mean.
 Means of binary flags are frequencies over available decisions. The maximum
 `unchanged_image_streak` is the longest unchanged streak. Distinct genome IDs do
 not imply distinct images. Historical nearest-image MSE has quadratic cost in
@@ -299,8 +301,9 @@ retained parent. Random selection has no classifier scores or evaluations.
 ### Novelty
 
 `novelty_selected`, `novelty_grid_mean`, `novelty_grid_min` and
-`novelty_grid_max` describe recorded raw distances from the **previous displayed
-grid's mean image**. `novelty_parent_margin` compares the chosen candidate with
+`novelty_grid_max` describe recorded raw distances from the **configured novelty
+reference**: previous displayed grid mean (default) or previous selected parent.
+`novelty_parent_margin` compares the chosen candidate with
 the retained parent under that same reference. These differ from historical
 nearest-image MSE. All are unavailable on the first grid.
 
@@ -359,8 +362,13 @@ forecast use and whether it changed the current-value choice are explicit fields
 `offspring_target`, signed/absolute/squared error and baseline squared errors are
 assigned to the **parent's selection generation**. `offspring_outcome` records the
 arrival generation, original forecast and eight actual child measurements under
-the frozen selection-time references. Repeated children count individually. The
-first/ineligible parents and the final unobserved parent have null targets.
+the frozen selection-time references. New runs record `offspring_aggregation`: `max`
+(default) or `mean`; `offspring_target` follows that choice. Existing saved mean
+targets retain their original meaning. Max predicts the expected best value in an
+eight-child brood; it is not the mean-child diagnostic. Repeated children count
+individually, and the retained parent is excluded. The frozen reference is the
+active selection-time image (grid mean or previous parent), not the next grid's
+reference. The first/ineligible parents and the final unobserved parent have null targets.
 
 Cumulative MAE/RMSE and running-mean/current-value baseline RMSE use only observed
 eligible targets. These are retrospective curves indexed by forecast generation;

@@ -116,9 +116,10 @@ def test_grayscale_contract_is_supported_without_changing_shape():
     assert strategy.choose([solid(255, (2, 2))], rng=rng).evaluation.values[0, 0] == 1
 
 
-def test_saved_run_replays_scores_choices_and_images(tmp_path):
+@pytest.mark.parametrize("reference", ["previous-grid-mean", "previous-parent"])
+def test_saved_run_replays_scores_choices_and_images(tmp_path, reference):
     settings = ExperimentSettings(steps=3, size=8, checkpoint_every=2)
-    run_experiment(selection_strategy=NoveltySelectionStrategy(), output_dir=tmp_path / "run",
+    run_experiment(selection_strategy=NoveltySelectionStrategy(novelty_reference=reference), output_dir=tmp_path / "run",
                    settings=settings, progress=None)
     data = json.loads((tmp_path / "run/session.json").read_text())
     assert data["metadata"]["selection_strategy"]["selection_strategy"] == "novelty"
@@ -126,7 +127,7 @@ def test_saved_run_replays_scores_choices_and_images(tmp_path):
     assert data["summary"]["evaluated_images"] == 27
     assert data["summary"]["unique_candidates"] == 25
     records = {g["key"]: g for g in data["genomes"]}
-    strategy, rng = NoveltySelectionStrategy(), random.Random(settings.resolved_selection_seed)
+    strategy, rng = NoveltySelectionStrategy(novelty_reference=reference), random.Random(settings.resolved_selection_seed)
     decisions = [e for e in data["events"] if e["action"] == "select"]
     for event in decisions:
         images = [np.array(Image.open(tmp_path / "run" / records[key]["image"])) for key in event["displayed"]]

@@ -19,17 +19,58 @@ def single_thread():
 
 
 def test_hidden_pixels_cannot_enter_inputs_and_only_hidden_pixels_contribute_to_loss():
-    target = torch.zeros((2, 3, 32, 32))
+    size = 96
+    tile_size = size // 4
+    target = torch.zeros((2, 3, size, size))
     inputs, visible = masked_inputs(target, torch.tensor([0, 15]))
     changed = target.clone()
-    changed[0, :, :8, :8] = 1
-    changed[1, :, 24:, 24:] = 1
+    changed[0, :, :tile_size, :tile_size] = 1
+    changed[1, :, -tile_size:, -tile_size:] = 1
     new_inputs, _ = masked_inputs(changed, torch.tensor([0, 15]))
     assert torch.equal(inputs, new_inputs)
     assert torch.equal(inputs[:, 3:], visible)
     assert torch.all(inputs[:, :3] * (1 - visible) == 0)
     assert torch.equal(masked_mse(target, changed, visible), torch.ones(2))
     assert torch.equal(masked_mse(visible.expand(-1, 3, -1, -1), target, visible), torch.zeros(2))
+
+
+def test_sixteen_masks_cover_each_pixel_once_and_prepare_preserves_matching_source():
+    size = 96
+    observer = MaskedImageObserver()
+    image = np.random.default_rng(9).integers(0, 256, (size, size, 3), dtype=np.uint8)
+    prepared = observer.prepare(image)
+    np.testing.assert_array_equal(prepared.numpy(), image.transpose(2, 0, 1).astype(np.float32) / 255)
+    image[:] = 0
+    assert torch.count_nonzero(prepared) > 0  # Replay owns its pixels.
+    targets = prepared[None].expand(16, -1, -1, -1)
+    _, visible = masked_inputs(targets, torch.arange(16))
+    hidden = 1 - visible
+    assert torch.equal(hidden.sum(0), torch.ones((1, size, size)))
+    assert torch.equal(hidden.sum((1, 2, 3)), torch.full((16,), (size // 4) ** 2))
+    assert prepared.shape == (3, size, size)
+
+
+@pytest.mark.parametrize("shape", [(2, 3, 32, 32), (2, 3, 64, 64), (2, 3, 96, 32),
+                                  (2, 4, 96, 96), (3, 32, 32)])
+def test_mask_rejects_unsupported_target_geometry(shape):
+    with pytest.raises(ValueError, match="Targets"):
+        masked_inputs(torch.zeros(shape), torch.tensor([0, 1]))
+
+
+@pytest.mark.parametrize("ids", [torch.tensor([0]), torch.tensor([-1, 0]), torch.tensor([0, 16]),
+                                 torch.tensor([0., 1.]), torch.tensor([[0, 1]])])
+def test_mask_rejects_invalid_tile_ids(ids):
+    with pytest.raises(ValueError, match="tile|Tile"):
+        masked_inputs(torch.zeros((2, 3, 96, 96)), ids)
+
+
+def test_observer_records_fixed_resolution_and_mask_geometry():
+    observer = MaskedImageObserver()
+    description = observer.describe()
+    assert (observer.size, observer.tile_size, observer.mask_count) == (96, 24, 16)
+    assert description['size'] == 96 and description['tile_size'] == 24
+    assert description['mask_count'] == 16 and description['hidden_fraction'] == 1 / 16
+    assert '27648' in description['architecture'] and '96x96' in description['preprocessing']
 
 
 def test_random_observer_is_seeded_without_consuming_global_rng_and_scores_without_learning():
@@ -43,7 +84,7 @@ def test_random_observer_is_seeded_without_consuming_global_rng_and_scores_witho
     image = np.zeros((32, 32, 3), dtype=np.uint8)
     before = observer.state_hash()
     errors, reconstructed = observer.predict([image, image])
-    assert errors.shape == (2,) and reconstructed.shape == (2, 32, 32, 3)
+    assert errors.shape == (2,) and reconstructed.shape == (2, 96, 96, 3)
     assert np.isfinite(errors).all() and np.all((errors >= 0) & (errors <= 1))
     assert errors[0] == errors[1]
     assert observer.state_hash() == before
@@ -105,6 +146,7 @@ def test_device_validation_does_not_silently_fall_back(monkeypatch):
 @pytest.mark.parametrize('device', ['cpu', pytest.param('mps', marks=pytest.mark.skipif(
     not torch.backends.mps.is_available(), reason='Apple GPU access required'))])
 def test_snapshot_is_inference_only_and_independent_of_live_training(device):
+    size = 96
     observer = MaskedImageObserver(device=device)
     with pytest.raises(RuntimeError, match="initialized"):
         observer.snapshot()
@@ -112,11 +154,14 @@ def test_snapshot_is_inference_only_and_independent_of_live_training(device):
     rng_before = torch.get_rng_state().clone()
     frozen = observer.snapshot()
     assert torch.equal(rng_before, torch.get_rng_state())
+    assert frozen.size == size and frozen.tile_size == size // 4
     assert frozen.optimizer is None
     assert all(not parameter.requires_grad for parameter in frozen.model.parameters())
     assert frozen.state_hash() == observer.state_hash()
     images = [np.zeros((32, 32, 3), dtype=np.uint8)]
-    predictions = frozen.predict(images)[0]
+    predictions, mosaics = frozen.predict(images)
+    assert mosaics.shape == (1, size, size, 3)
+    assert np.isfinite(predictions).all() and np.isfinite(mosaics).all()
     before = frozen.state_hash()
     observer.train([observer.prepare(images[0])], steps=2, batch_size=2, seed=9)
     assert observer.state_hash() != before

@@ -13,12 +13,30 @@ from torchvision.models import ResNet18_Weights, resnet18
 from .evaluation import validate_image
 
 
+IMAGE_SIZE = 96
+MASK_GRID = 4
+MASK_COUNT = MASK_GRID ** 2
+TILE_SIZE = IMAGE_SIZE // MASK_GRID
+
+
 def masked_inputs(targets, tile_ids):
-    """Hide one 8x8 tile per 32x32 RGB target, including a visibility channel."""
-    visible = targets.new_ones((len(targets), 1, 32, 32))
-    for row, tile in enumerate(tile_ids.tolist()):
-        y, x = divmod(tile, 4)
-        visible[row, :, y * 8:(y + 1) * 8, x * 8:(x + 1) * 8] = 0
+    """Hide one of sixteen equal square tiles, with an explicit visibility channel."""
+    if (not isinstance(targets, torch.Tensor) or targets.ndim != 4 or
+            targets.shape[1:] != (3, IMAGE_SIZE, IMAGE_SIZE) or not targets.is_floating_point()):
+        raise ValueError("Targets must be floating RGB tensors shaped Nx3x96x96.")
+    if (not isinstance(tile_ids, torch.Tensor) or tile_ids.ndim != 1 or
+            len(tile_ids) != len(targets) or
+            tile_ids.dtype not in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64)):
+        raise ValueError("Supply one integer tile ID per target, in [0, 15].")
+    ids = tile_ids.tolist()
+    if any(tile < 0 or tile >= MASK_COUNT for tile in ids):
+        raise ValueError("Tile IDs must be in [0, 15].")
+    size = targets.shape[-1]
+    tile_size = TILE_SIZE
+    visible = targets.new_ones((len(targets), 1, size, size))
+    for row, tile in enumerate(ids):
+        y, x = divmod(tile, MASK_GRID)
+        visible[row, :, y * tile_size:(y + 1) * tile_size, x * tile_size:(x + 1) * tile_size] = 0
     mean = targets.new_tensor([.485, .456, .406])[None, :, None, None]
     std = targets.new_tensor([.229, .224, .225])[None, :, None, None]
     return torch.cat((((targets - mean) / std) * visible, visible), dim=1), visible
@@ -48,6 +66,9 @@ class MaskedImageObserver:
         if device == "mps" and not torch.backends.mps.is_available():
             raise ValueError("MPS is unavailable in this process; use cpu or run with Apple GPU access.")
         self.device = device
+        self.size = IMAGE_SIZE
+        self.tile_size = TILE_SIZE
+        self.mask_count = MASK_COUNT
         self.initialization = initialization
         self.learning_rate = float(learning_rate)
         self.cache_dir = Path(cache_dir) if cache_dir is not None else Path(torch.hub.get_dir()) / "checkpoints"
@@ -65,7 +86,7 @@ class MaskedImageObserver:
             with torch.no_grad():
                 model.conv1.weight[:, :3].copy_(rgb_weights)
                 model.conv1.weight[:, 3].zero_()
-            model.fc = torch.nn.Linear(512, 3 * 32 * 32)
+            model.fc = torch.nn.Linear(512, 3 * self.size * self.size)
         if self.initialization == "imagenet":
             checkpoint = ResNet18_Weights.IMAGENET1K_V1
             state = torch.hub.load_state_dict_from_url(
@@ -84,12 +105,14 @@ class MaskedImageObserver:
 
     def describe(self):
         return {
-            "observer": "masked_resnet18", "version": 1, "initialization": self.initialization,
+            "observer": "masked_resnet18", "version": 2, "initialization": self.initialization,
             "weights": "ResNet18_Weights.IMAGENET1K_V1" if self.initialization == "imagenet" else None,
             "checkpoint_sha256": self.checkpoint_sha256, "device": self.device,
-            "architecture": "ResNet18, four input channels (new mask weights zero), linear 512->3072, sigmoid, RGB 32x32",
-            "preprocessing": "PIL bilinear resize to 32x32 RGB, [0,1] targets; ImageNet normalization before masking inputs",
-            "masks": "16 row-major 8x8 tiles; one hidden per example, explicit visibility channel",
+            "size": self.size, "tile_size": self.tile_size, "mask_count": self.mask_count,
+            "hidden_fraction": 1 / self.mask_count,
+            "architecture": f"ResNet18, four input channels (new mask weights zero), linear 512->{3*self.size*self.size}, sigmoid, RGB {self.size}x{self.size}",
+            "preprocessing": f"PIL bilinear resize to {self.size}x{self.size} RGB, [0,1] targets; ImageNet normalization before masking inputs",
+            "masks": f"16 row-major {self.tile_size}x{self.tile_size} tiles; one hidden per example, explicit visibility channel",
             "loss": "MSE on hidden RGB pixels only; scoring averages all 16 tiles before training",
             "optimizer": {"name": "Adam", "lr": self.learning_rate, "betas": [.9, .999], "eps": 1e-8, "weight_decay": 0},
             "training": "all backbone and head weights; BatchNorm updates only in training mode",
@@ -98,10 +121,9 @@ class MaskedImageObserver:
             "torch_threads": torch.get_num_threads(),
         }
 
-    @staticmethod
-    def prepare(image):
+    def prepare(self, image):
         validate_image(image)
-        resized = Image.fromarray(image).convert("RGB").resize((32, 32), Image.Resampling.BILINEAR)
+        resized = Image.fromarray(image).convert("RGB").resize((self.size, self.size), Image.Resampling.BILINEAR)
         pixels = np.array(resized, dtype=np.float32).transpose(2, 0, 1) / 255
         return torch.from_numpy(pixels.copy())
 
@@ -122,7 +144,7 @@ class MaskedImageObserver:
         return frozen
 
     def _forward(self, inputs):
-        return self.model(inputs).sigmoid().reshape(-1, 3, 32, 32)
+        return self.model(inputs).sigmoid().reshape(-1, 3, self.size, self.size)
 
     def predict(self, images):
         """Return pre-update errors and mosaics of the sixteen hidden-tile predictions."""
@@ -130,8 +152,8 @@ class MaskedImageObserver:
         errors, reconstructions = [], []
         with torch.inference_mode():
             for image in images:
-                targets = self.prepare(image).to(self.device)[None].expand(16, -1, -1, -1)
-                inputs, visible = masked_inputs(targets, torch.arange(16))
+                targets = self.prepare(image).to(self.device)[None].expand(self.mask_count, -1, -1, -1)
+                inputs, visible = masked_inputs(targets, torch.arange(self.mask_count))
                 prediction = self._forward(inputs)
                 errors.append(float(masked_mse(prediction, targets, visible).mean()))
                 reconstructions.append((prediction * (1 - visible)).sum(0).permute(1, 2, 0).cpu().numpy())
@@ -150,10 +172,12 @@ class MaskedImageObserver:
         try:
             for _ in range(steps):
                 indices = torch.randint(len(replay), (batch_size,), generator=generator)
-                tiles = torch.randint(16, (batch_size,), generator=generator)
+                tiles = torch.randint(self.mask_count, (batch_size,), generator=generator)
                 sample_hash.update(indices.numpy().tobytes())
                 sample_hash.update(tiles.numpy().tobytes())
                 targets = torch.stack([replay[i] for i in indices.tolist()]).to(self.device)
+                if targets.shape[1:] != (3, self.size, self.size):
+                    raise ValueError("Replay images must match the configured observer size.")
                 inputs, visible = masked_inputs(targets, tiles)
                 self.optimizer.zero_grad(set_to_none=True)
                 loss = masked_mse(self._forward(inputs), targets, visible).mean()

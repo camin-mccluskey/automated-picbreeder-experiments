@@ -72,7 +72,7 @@ def test_fixed_target_uses_selection_time_references_and_counts_all_children():
     mean = np.zeros((8, 8, 3))
     reference = np.linspace(0, 1, 9)
     classifier = {'checkpoint_sha256': 'fixed'}
-    target = FrozenImageNetOffspringValue(reference_mean=mean, novelty_reference=reference,
+    target = FrozenImageNetOffspringValue(reference_image=mean, novelty_reference=reference,
         confidence_reference=reference, selected_parent=picture(128), origin_generation=1,
         comprehension_weight=.5, evaluator_metadata=classifier)
     mean[:] = 1
@@ -82,6 +82,7 @@ def test_fixed_target_uses_selection_time_references_and_counts_all_children():
     result = target.evaluate_offspring([picture(128)] + [picture(0)]*7 + [picture(255)],
                                      confidence=np.array([0.]*7 + [1.]))
     assert result.metadata['mean_offspring_value'] == .125
+    assert result.metadata['offspring_value'] == 1  # Max is the new-run default.
     assert result.metadata['child_count'] == 8
     assert result.metadata['evaluator']['checkpoint_sha256'] == 'fixed'
     np.testing.assert_array_equal(result.values[:, -1], [0.]*7 + [1.])
@@ -94,10 +95,13 @@ def test_fixed_target_uses_selection_time_references_and_counts_all_children():
 
 
 @pytest.mark.parametrize('weight', [0, .5, 1])
-def test_gamma_zero_matches_baseline_choices_scores_and_rng(controlled, weight):
+@pytest.mark.parametrize('aggregation', ['max', 'mean'])
+@pytest.mark.parametrize('reference', ['previous-grid-mean', 'previous-parent'])
+def test_gamma_zero_matches_baseline_choices_scores_and_rng(controlled, weight, aggregation, reference):
     classifier = Classifier()
-    strategy = OffspringValueImageNetSelectionStrategy(weight, evaluator=classifier, gamma=0, warmup_targets=1)
-    baseline = NoveltyImageNetSelectionStrategy(weight, evaluator=Classifier())
+    strategy = OffspringValueImageNetSelectionStrategy(weight, evaluator=classifier, gamma=0, warmup_targets=1,
+        offspring_aggregation=aggregation, novelty_reference=reference)
+    baseline = NoveltyImageNetSelectionStrategy(weight, evaluator=Classifier(), novelty_reference=reference)
     a, b = Random(7), Random(7)
     images = grid()
     for t in range(5):
@@ -135,7 +139,7 @@ def test_warmup_delayed_targets_and_original_forecasts(controlled, warmup):
             assert feedback['forecast'] == prior['forecast']
             assert feedback['predictor_state_hash'] == prior['predictor_state_hash']
             assert feedback['error'] == prior['forecast'] - feedback['target']
-            assert feedback['target_context']['reference_mean_hash'] == prior['reference_mean_hash']
+            assert feedback['target_context']['reference_image_hash'] == prior['reference_image_hash']
             assert len(feedback['child_values']) == 8
         if meta['forecast_used']:
             np.testing.assert_allclose(decision.scores,
@@ -163,6 +167,7 @@ def test_invalid_chronology_fails_before_classification_or_training(controlled):
 
 @pytest.mark.parametrize('options', [{'gamma': -1}, {'gamma': float('nan')}, {'gamma': True},
     {'warmup_targets': 0}, {'predictor_batch_size': 0}, {'predictor_training_steps': 0},
+    {'offspring_aggregation': 'median'}, {'offspring_aggregation': None},
     {'predictor_learning_rate': float('inf')}, {'comprehension_weight': -1}, {'device': 'cuda'}])
 def test_invalid_configuration_before_loading_classifier(monkeypatch, options):
     factory = Mock(side_effect=AssertionError('Do not load classifier'))
@@ -173,12 +178,14 @@ def test_invalid_configuration_before_loading_classifier(monkeypatch, options):
 
 
 @pytest.mark.parametrize('gamma', [0, 3])
-def test_saved_run_real_predictor_replays_and_preserves_ancestry(tmp_path, gamma):
+@pytest.mark.parametrize('aggregation,reference', [('mean', 'previous-grid-mean'), ('max', 'previous-parent')])
+def test_saved_run_real_predictor_replays_and_preserves_ancestry(tmp_path, gamma, aggregation, reference):
     old_threads = torch.get_num_threads()
     torch.set_num_threads(1)
     try:
         settings = ExperimentSettings(steps=5, size=8, checkpoint_every=2)
-        options = dict(gamma=gamma, warmup_targets=1, predictor_training_steps=2, predictor_batch_size=2)
+        options = dict(gamma=gamma, warmup_targets=1, predictor_training_steps=2, predictor_batch_size=2,
+                       offspring_aggregation=aggregation, novelty_reference=reference)
         run_experiment(selection_strategy=OffspringValueImageNetSelectionStrategy(evaluator=Classifier(), **options),
                        settings=settings, output_dir=tmp_path/'run', progress=None)
         data = json.loads((tmp_path/'run/session.json').read_text())
@@ -200,7 +207,7 @@ def test_saved_run_real_predictor_replays_and_preserves_ancestry(tmp_path, gamma
         assert data['summary']['evaluated_images'] == 45
         assert len(records) == 41
         if gamma == 0:
-            run_experiment(selection_strategy=NoveltyImageNetSelectionStrategy(evaluator=Classifier()),
+            run_experiment(selection_strategy=NoveltyImageNetSelectionStrategy(evaluator=Classifier(), novelty_reference=reference),
                            settings=settings, output_dir=tmp_path/'control', progress=None)
             control = json.loads((tmp_path/'control/session.json').read_text())
             assert data['genomes'] == control['genomes']

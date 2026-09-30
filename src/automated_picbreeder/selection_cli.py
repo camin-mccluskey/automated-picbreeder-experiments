@@ -91,6 +91,12 @@ def _selection_options(parser, *, offspring=False):
                            help="Offspring forecast weight (default: 1; 0 is the current-image control).")
 
 
+def _novelty_options(parser):
+    group = parser.add_argument_group("Novelty reference")
+    group.add_argument("--novelty-reference", choices=("previous-grid-mean", "previous-parent"),
+                       help="Pixel distance reference (default: previous-grid-mean; previous-parent uses the preceding selected image).")
+
+
 def _imagenet_options(parser):
     group = parser.add_argument_group("ImageNet classifier")
     group.add_argument("--imagenet-model", help="Torchvision ImageNet-1K model (default: resnet18).")
@@ -116,6 +122,8 @@ def _observer_options(parser, *, initializations=("random", "imagenet")):
 
 def _predictor_options(parser):
     group = parser.add_argument_group("Offspring predictor")
+    group.add_argument("--offspring-aggregation", choices=("max", "mean"),
+                       help="Predict the maximum or mean value of eight actual children (default: max).")
     group.add_argument("--warmup-targets", type=_integer_at_least(1),
                        help="Eligible targets before forecasts affect selection (default: 10).")
     group.add_argument("--predictor-training-steps", type=_integer_at_least(1),
@@ -134,13 +142,13 @@ def _provided(args, *names, **renamed):
 
 
 def _observer_kwargs(args):
-    return _provided(args, "comprehension_weight", "comprehension_warmup_steps",
+    return _provided(args, "novelty_reference", "comprehension_weight", "comprehension_warmup_steps",
                      "observer_initialization", "training_steps", "learning_rate", "device", "cache_dir",
                      batch_size="observer_batch_size")
 
 
 def _predictor_kwargs(args):
-    return _provided(args, "gamma", "warmup_targets", "predictor_training_steps",
+    return _provided(args, "offspring_aggregation", "gamma", "warmup_targets", "predictor_training_steps",
                      "predictor_batch_size", "predictor_learning_rate")
 
 
@@ -156,7 +164,8 @@ def _random(parser):
 
 
 def _novelty(parser):
-    parser.set_defaults(build_strategy=lambda args: NoveltySelectionStrategy())
+    _novelty_options(parser)
+    parser.set_defaults(build_strategy=lambda args: NoveltySelectionStrategy(**_provided(args, "novelty_reference")))
 
 
 def _imagenet(parser):
@@ -170,14 +179,16 @@ def _imagenet(parser):
 
 
 def _novelty_imagenet(parser):
+    _novelty_options(parser)
     _selection_options(parser)
     _imagenet_options(parser)
     _runtime_options(parser)
     parser.set_defaults(build_strategy=lambda args: NoveltyImageNetSelectionStrategy(
-        **_provided(args, "comprehension_weight"), evaluator=_build_evaluator(args)))
+        **_provided(args, "novelty_reference", "comprehension_weight"), evaluator=_build_evaluator(args)))
 
 
 def _novelty_predictability(parser):
+    _novelty_options(parser)
     _selection_options(parser)
     _observer_options(parser)
     _runtime_options(parser, devices=("cpu", "mps"))
@@ -185,6 +196,7 @@ def _novelty_predictability(parser):
 
 
 def _offspring_value(parser):
+    _novelty_options(parser)
     _selection_options(parser, offspring=True)
     _observer_options(parser, initializations=("random",))
     _predictor_options(parser)
@@ -194,18 +206,19 @@ def _offspring_value(parser):
 
 
 def _offspring_value_imagenet(parser):
+    _novelty_options(parser)
     _selection_options(parser, offspring=True)
     _imagenet_options(parser)
     _predictor_options(parser)
     _runtime_options(parser, devices=("cpu", "mps"))
     parser.set_defaults(build_strategy=lambda args: OffspringValueImageNetSelectionStrategy(
-        **_provided(args, "comprehension_weight", "device"), **_predictor_kwargs(args),
+        **_provided(args, "novelty_reference", "comprehension_weight", "device"), **_predictor_kwargs(args),
         evaluator=_build_evaluator(args)))
 
 
 COMMANDS = (
     ("random", "Choose uniformly without image evaluation.", _random),
-    ("novelty", "Maximize pixel novelty relative to the previous grid.", _novelty),
+    ("novelty", "Maximize pixel novelty relative to a previous grid mean or selected parent.", _novelty),
     ("novelty-imagenet", "Combine pixel novelty and ImageNet confidence.", _novelty_imagenet),
     ("novelty-predictability", "Combine pixel novelty and learned patch predictability.", _novelty_predictability),
     ("offspring-value", "Add offspring forecasts to novelty and patch predictability.", _offspring_value),

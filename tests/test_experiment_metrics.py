@@ -55,9 +55,10 @@ def test_common_metrics_use_pixels_and_exclude_first_grid_from_transitions(tmp_p
     assert (tmp_path / "run" / "metrics.csv").is_file()
 
 
-def test_pixel_distances_and_novelty_match_saved_images_and_measurements(tmp_path):
+@pytest.mark.parametrize("reference", ["previous-grid-mean", "previous-parent"])
+def test_pixel_distances_and_novelty_match_saved_images_and_measurements(tmp_path, reference):
     directory = tmp_path / "run"
-    report = run(directory, NoveltySelectionStrategy())
+    report = run(directory, NoveltySelectionStrategy(novelty_reference=reference))
     session = json.loads((directory / "session.json").read_text())
     events = [e for e in session["events"] if e["action"] == "select"]
     previous = []
@@ -70,11 +71,27 @@ def test_pixel_distances_and_novelty_match_saved_images_and_measurements(tmp_pat
             values = np.asarray(event["evaluation"]["values"])[:, 0]
             assert row["metrics"]["novelty_selected"] == values[event["position"]]
             assert row["metrics"]["novelty_grid_mean"] == pytest.approx(values.mean())
+            if reference == "previous-parent":
+                assert row["metrics"]["novelty_selected"] == pytest.approx(distances[-1])
+                assert values[0] == 0  # The retained parent is its own novelty reference.
         else:
             assert row["metrics"]["novelty_selected"] is None
         previous.append(pixels)
     # Rebuilding is deterministic and never evaluates a model.
     assert build_run_metrics(directory) == report
+
+
+def test_old_mean_offspring_records_keep_their_recorded_target():
+    """The reader uses recorded targets without applying the new max default."""
+    from automated_picbreeder.experiment_metrics import _align_offspring_feedback
+    rows = [{"metrics": {"offspring_forecast_used": 1, "offspring_target": None}}]
+    feedback = dict(origin_generation=0, received_generation=1, forecast=.4,
+                    forecast_used=True, running_mean_forecast=.5, current_value=.6,
+                    child_names=["fixed_reference_value"], child_values=[[0.]]*7+[[1.]],
+                    target=.125, error=.275, absolute_error=.275, squared_error=.275**2,
+                    running_mean_squared_error=.375**2, current_value_squared_error=.475**2)
+    _align_offspring_feedback(rows, [feedback])
+    assert rows[0]["metrics"]["offspring_target"] == .125
 
 
 @pytest.mark.parametrize("weight", [0, .4, 1])

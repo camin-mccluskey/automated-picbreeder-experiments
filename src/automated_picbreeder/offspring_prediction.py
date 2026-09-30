@@ -1,4 +1,4 @@
-"""Run-local scalar prediction of mean offspring value; loaded only on demand."""
+"""Run-local prediction of the configured eight-child offspring value aggregate; loaded only on demand."""
 import hashlib
 from importlib.metadata import version
 
@@ -23,7 +23,17 @@ class _ValueNetwork(nn.Module):
 
 
 class OffspringValuePredictor:
-    def __init__(self, *, learning_rate=.001, device='cpu', value_source='predictability'):
+    """Estimate the expected configured aggregate for an actual eight-child brood.
+
+    Each fresh run learns one aggregation from completed parent transitions. The
+    aggregation changes its labels, not its network or 21/23-scalar context.
+    """
+
+    def __init__(self, *, learning_rate=.001, device='cpu', value_source='predictability',
+                 offspring_aggregation='max'):
+        if offspring_aggregation not in ('max', 'mean'):
+            raise ValueError('offspring_aggregation must be max or mean.')
+        self.offspring_aggregation = offspring_aggregation
         if value_source not in ('predictability', 'imagenet'):
             raise ValueError('Predictor value_source must be predictability or imagenet.')
         if device not in ('cpu', 'mps'):
@@ -52,26 +62,26 @@ class OffspringValuePredictor:
         if self.value_source == 'predictability':
             context += ['log1p_observer_updates', 'log1p_observer_replay_size']
         return {
-            'predictor': 'offspring_mean_value', 'version': 1, 'device': self.device,
+            'predictor': 'offspring_value', 'version': 2, 'offspring_aggregation': self.offspring_aggregation, 'device': self.device,
             'architecture': f'Conv3x3 stride2 pad1: 6->16->32->64 with ReLU; global mean; concatenate {self.context_size} scalars; {64+self.context_size}->64 ReLU->1 sigmoid',
-            'inputs': 'full-resolution parent RGB/255 and previous-grid RGB mean, six channels; float32',
+            'inputs': 'full-resolution parent RGB/255 and selection-time novelty reference RGB image, six channels; float32',
             'context': context,
             'initialization': 'scratch, CPU, run-derived seed',
             'optimizer': {'name': 'Adam', 'lr': self.learning_rate, 'betas': [.9,.999], 'eps': 1e-8, 'weight_decay': 0},
-            'loss': 'MSE against realised mean value of eight actual children',
+            'loss': f'MSE against realised {self.offspring_aggregation} value of eight actual children',
             'sampling': 'uniform transitions with replacement; temporary CPU generator per update call',
             'torch_version': version('torch'), 'torch_threads': torch.get_num_threads(),
         }
 
-    def prepare(self, images, reference_mean, contexts):
-        mean = np.asarray(reference_mean, dtype=np.float32).transpose(2, 0, 1)
+    def prepare(self, images, reference_image, contexts):
+        reference_pixels = np.asarray(reference_image, dtype=np.float32).transpose(2, 0, 1)
         contexts = np.asarray(contexts, dtype=np.float32)
         if contexts.shape != (len(images), self.context_size) or not np.isfinite(contexts).all():
             raise ValueError(f'Expected {self.context_size} finite context values per parent.')
         result = []
         for image, context in zip(images, contexts, strict=True):
             pixels = np.asarray(image, dtype=np.float32).transpose(2, 0, 1)/255
-            result.append((torch.from_numpy(np.concatenate((pixels, mean)).copy()),
+            result.append((torch.from_numpy(np.concatenate((pixels, reference_pixels)).copy()),
                            torch.from_numpy(context.copy())))
         return result
 

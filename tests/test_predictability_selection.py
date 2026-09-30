@@ -30,7 +30,7 @@ class Observer:
 
     def predict(self, images):
         self.calls.append(('predict', self.updates))
-        return np.linspace(.9, .1, len(images)), np.zeros((len(images), 32, 32, 3))
+        return np.linspace(.9, .1, len(images)), np.zeros((len(images), 96, 96, 3))
 
     def train(self, replay, *, steps, batch_size, seed):
         self.calls.append(('train', len(replay)))
@@ -93,8 +93,10 @@ def test_comprehension_warmup_keeps_training_and_switches_scores_after_completed
         assert decisions[warmup].position == 1
 
 
-def test_zero_weight_matches_novelty_and_fresh_instances_have_no_history(controlled):
-    plain, combined = NoveltySelectionStrategy(), NoveltyPredictabilitySelectionStrategy(comprehension_weight=0)
+@pytest.mark.parametrize("reference", ["previous-grid-mean", "previous-parent"])
+def test_zero_weight_matches_novelty_and_fresh_instances_have_no_history(controlled, reference):
+    plain = NoveltySelectionStrategy(novelty_reference=reference)
+    combined = NoveltyPredictabilitySelectionStrategy(comprehension_weight=0, novelty_reference=reference)
     a, b = Random(9), Random(9)
     for images in [grid([0, 0, 255]), grid([255, 85, 0]), grid([0] * 9)]:
         x, y = plain.choose(images, rng=a), combined.choose(images, rng=b)
@@ -115,7 +117,8 @@ def test_invalid_configuration_before_observer_construction(kwargs):
         NoveltyPredictabilitySelectionStrategy(**kwargs)
 
 
-def test_real_observer_saved_run_replay_and_breeding_rng_isolation(tmp_path):
+@pytest.mark.parametrize("reference", ["previous-grid-mean", "previous-parent"])
+def test_real_observer_saved_run_replay_and_breeding_rng_isolation(tmp_path, reference):
     import torch
     from PIL import Image
     from automated_picbreeder.experiment import ExperimentSettings, run_experiment
@@ -126,11 +129,11 @@ def test_real_observer_saved_run_replay_and_breeding_rng_isolation(tmp_path):
     torch.set_num_threads(1)
     try:
         settings = ExperimentSettings(steps=3, size=8, checkpoint_every=2)
-        strategy = NoveltyPredictabilitySelectionStrategy(comprehension_warmup_steps=2, training_steps=1, batch_size=2)
+        strategy = NoveltyPredictabilitySelectionStrategy(comprehension_warmup_steps=2, training_steps=1, batch_size=2, novelty_reference=reference)
         run_experiment(selection_strategy=strategy, settings=settings, output_dir=tmp_path / 'run', progress=None)
         data = json.loads((tmp_path / 'run/session.json').read_text())
         records = {g['key']: g for g in data['genomes']}
-        replay = NoveltyPredictabilitySelectionStrategy(comprehension_warmup_steps=2, training_steps=1, batch_size=2)
+        replay = NoveltyPredictabilitySelectionStrategy(comprehension_warmup_steps=2, training_steps=1, batch_size=2, novelty_reference=reference)
         rng = Random(settings.resolved_selection_seed)
         breeding = BreedingSession(seed=settings.seed)
         decisions = [e for e in data['events'] if e['action'] == 'select']
