@@ -11,7 +11,7 @@ import numpy as np
 from .breeding import BreedingSession
 from .cppn import png_bytes, render
 from .experiment_reporting import contact_sheet, progress_message
-from .persistence import SessionWriter
+from .persistence import SessionWriter, write_json
 from .selection_strategies import SelectionStrategy
 
 
@@ -70,16 +70,22 @@ def run_experiment(
     selection_rng = Random(settings.resolved_selection_seed)
     names = None
     start = time.perf_counter()
+    timings = []
     evaluated_images = candidate_presentations = 0
     for step in range(settings.steps):
+        decision_start = time.perf_counter()
         if step:
             session.evolve(strength=settings.mutation_strength, topology=settings.topology)
+        bred = time.perf_counter()
         ids = session.candidates.copy()
         images = [render(session.genomes[key], session.config, settings.size) for key in ids]
+        rendered = time.perf_counter()
         # Preserve the current grid even if the selection strategy fails.
         writer.save(session, images={key: png_bytes(pixels) for key, pixels in zip(ids, images)})
+        saved_grid = time.perf_counter()
         decision = selection_strategy.choose(images, rng=selection_rng)
         decision.validate(len(ids))
+        chosen = time.perf_counter()
         if decision.evaluation is not None:
             if names is None:
                 names = decision.evaluation.names
@@ -100,6 +106,19 @@ def run_experiment(
         contact_sheet(images, ids, decision).save(directory / "grids" / f"{step:06d}.png")
         checkpoint = step if decisions % settings.checkpoint_every == 0 or decisions == settings.steps else None
         writer.save(session, summary=summary, checkpoint=checkpoint)
+        saved = time.perf_counter()
+        timings.append({"generation": step, "breeding_seconds": bred - decision_start,
+                        "rendering_seconds": rendered - bred,
+                        "selection_seconds": chosen - saved_grid,
+                        "saving_seconds": (saved_grid - rendered) + (saved - chosen),
+                        "decision_seconds": saved - decision_start})
+        write_json(directory / "performance.json", {
+            "generations": timings, "elapsed_seconds": time.perf_counter() - start,
+            "scope": "Evolution loop including rendering, selection/training and saving; excludes strategy construction and metrics extraction. Stage times are host wall times; nested strategy timings overlap.",
+        })
         if progress is not None:
             progress(progress_message(summary, settings.steps))
+    from .experiment_metrics import save_run_metrics
+
+    save_run_metrics(directory)
     return summary

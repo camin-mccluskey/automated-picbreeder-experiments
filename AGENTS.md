@@ -74,10 +74,16 @@ Paths below are relative to the repository root. Core modules live in `src/autom
 | `offspring_value.py` | Shared fixed-reference targets for frozen patch observers or already measured ImageNet confidence |
 | `selection_strategies.py` | `SelectionStrategy`, `SelectionDecision`, random, novelty, novelty-imagenet, novelty-predictability, offspring-value, offspring-value-imagenet and ImageNet selection |
 | `experiment.py` | Automated loop, settings, independent selection RNG, counters and checkpoints |
+| `experiment_batch.py` | Sequential independent seeded runs, failure/status records and batch aggregation |
+| `experiment_metrics.py` | Saved-session diagnostics, image references, per-generation CSV/JSON and equal-run summaries |
+| `session_history.py` | Chronological display visits/selection events and actual final genome ancestry |
+| `posthoc_evaluation.py` | Optional frozen ImageNet evaluation of saved images, separate from selection records and costs |
+| `experiment_viewer.py`, `viewer/` | Offline HTML export, relative image links and interactive charts/galleries |
 | `experiment_reporting.py` | Contact sheets and progress, using recorded decisions and optional scores |
 | `persistence.py` | `SessionWriter`: common assembly and saving of run data for both interfaces |
 | `selection_cli.py` | Shared CLI option groups, strategy subcommands and builders; add a configure function and register it in `COMMANDS` |
 | `experiments/run_selection.py` | Thin selection-strategy CLI entry point; experiment entry points belong in `experiments/` |
+| `experiments/view_results.py` | Build a viewer for saved runs, batches or collections, including human sessions |
 | `notebooks/01_cppn_selection.ipynb` | Human breeding, genome inspection and weight sweeps |
 | `notebooks/02_image_evaluation.ipynb` | Classifier inspection, selection-strategy comparison and a short run |
 | `notebooks/05_novelty_predictability.ipynb` | Pixel novelty distances/reference means and a short run |
@@ -107,6 +113,29 @@ Both interfaces export version-2 `session.json` through `SessionWriter`, with al
 Store strategy configuration in `metadata.selection_strategy` and resolved seeds in `metadata.settings`. Existing version-2 HSB sessions with older metadata and no decision field remain readable by the interpretation tools; do not rewrite them. The old experiment API and command have been replaced without compatibility wrappers.
 
 Automated runs additionally save grids and checkpoints. These are audit snapshots, not resumable evolution sessions. Use new output directories. `runs/`, `.cache/` and `.venv/` are local ignored artifacts; do not commit generated runs or model weights.
+
+`--runs N` on the existing CLI runs a batch with seed `base_seed + index`; explicit
+selection seeds increment too, otherwise they derive from each run seed. Construct
+fresh strategies/models for each run. Single and batch runs save version-1 metrics
+JSON/CSV and stage timings without changing selection or running extra inference.
+Batch manifests retain failures, and aggregates include only completed runs with
+equal run weight. Unavailable values are null, generation indices are zero based,
+and offspring outcomes align to the parent selection generation. See
+[docs/batch-experiments.md](docs/batch-experiments.md). Human notebook saves now
+export the same metrics and selected grids without inference. Each explicit
+selection click gets a trajectory row; `display_history` separately counts grid
+visits so reselections do not inflate candidate presentations. Back/reset visits
+and discarded branches remain counted. `final_ancestry` follows actual genome
+parent links, and the final image is the session's current selection, which can
+differ from the last click. Human interaction timing is separate from automated
+runtime. Optional `evaluate_session_imagenet` writes post-run measurements and
+costs separately; it never relabels human choices as classifier decisions.
+Every metrics export also generates `index.html`; batches maintain an overview.
+`experiments/view_results.py runs/` builds an offline collection viewer without
+inference or source-record changes. JavaScript and data are embedded, images use
+relative paths, and no server/CDN is required. Keep missing values as gaps, report
+failure status, and preserve chronological clicks, display visits and actual
+ancestry as separate views. The viewer is read-only; it cannot influence breeding.
 
 ## Development and verification
 

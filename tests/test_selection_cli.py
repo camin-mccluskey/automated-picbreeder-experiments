@@ -336,6 +336,45 @@ OPTION_FAMILIES = (
 )
 
 
+def test_batch_cli_runs_without_torch_and_records_seed_schedule(tmp_path):
+    code = """
+import builtins, runpy, sys
+original_import = builtins.__import__
+def without_torch(name, *args, **kwargs):
+    if name.split('.')[0] in {'torch', 'torchvision'}:
+        raise ImportError('Torch deliberately unavailable')
+    return original_import(name, *args, **kwargs)
+builtins.__import__ = without_torch
+runpy.run_path(sys.argv[1])['main'](['novelty', '--runs', '2', '--steps', '2', '--size', '4',
+    '--seed', '20', '--selection-seed', '0', '--output', sys.argv[2]])
+assert 'torch' not in sys.modules
+"""
+    output = tmp_path / "batch"
+    result = subprocess.run([sys.executable, "-c", code, str(CLI), str(output)],
+                            capture_output=True, text=True, check=True)
+    assert "Saved 2/2 completed runs" in result.stdout
+    manifest = json.loads((output / "batch.json").read_text())
+    assert [r["seed"] for r in manifest["runs"]] == [20, 21]
+    assert [r["selection_seed"] for r in manifest["runs"]] == [0, 1]
+
+
+def test_failed_batch_exits_nonzero(tmp_path, monkeypatch):
+    from automated_picbreeder import selection_cli
+    monkeypatch.setattr(selection_cli, "run_batch", lambda **kwargs: {"completed_runs": 1, "failed_runs": 1})
+    with pytest.raises(SystemExit) as result:
+        selection_cli.main(["random", "--runs", "2", "--output", str(tmp_path / "batch")])
+    assert result.value.code == 1
+
+
+@pytest.mark.parametrize("count", ["0", "-1", "1.5"])
+def test_invalid_batch_size_fails_before_output(tmp_path, count):
+    from automated_picbreeder.selection_cli import main
+    with pytest.raises(SystemExit) as result:
+        main(["random", "--runs", count, "--output", str(tmp_path / "batch")])
+    assert result.value.code == 2
+    assert not (tmp_path / "batch").exists()
+
+
 @pytest.mark.parametrize("name,flag,value", [
     (name, flag, value) for name in STRATEGIES
     for flag, value, supported in OPTION_FAMILIES if name not in supported

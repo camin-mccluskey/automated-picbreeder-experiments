@@ -22,6 +22,7 @@ def _source_snapshot(directory):
     root = Path(__file__).resolve().parents[2]
     paths = [*sorted((root / "src" / "automated_picbreeder").glob("*.py")),
              *sorted((root / "src" / "automated_picbreeder").glob("*.cfg")),
+             *sorted((root / "src" / "automated_picbreeder" / "viewer").glob("*.*")),
              *sorted((root / "experiments").glob("*.py")), root / "pyproject.toml", root / "uv.lock"]
     hashes = {}
     for path in paths:

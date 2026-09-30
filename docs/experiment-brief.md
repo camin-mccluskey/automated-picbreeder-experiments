@@ -4,6 +4,14 @@
 
 All automated selection strategies run through `experiments/run_selection.py`;
 see the [README](../README.md#automated-selection-experiments) for configuration.
+Use `--runs N` for independent seeded batches with saved diagnostics; see
+[batch experiments](batch-experiments.md) for metric definitions and aggregation.
+These diagnostics and image references do not constitute the representation
+assessment or a validated interestingness metric. Human notebook exports now use
+the same metric standard, keeping chronological exploration and final ancestry
+separate. Each export includes an offline `index.html` viewer with linked charts
+and image galleries; `experiments/view_results.py` builds collection views for
+existing automated and human sessions without model inference.
 Pixel novelty, online image predictability and offspring-value prediction use the
 same breeding loop. Their observers and predictors are separate from the CPPNs
 being evolved; observer learning and pixel diversity are not UFR evidence.

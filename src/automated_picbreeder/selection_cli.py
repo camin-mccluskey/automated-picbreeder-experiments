@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .experiment import ExperimentSettings, run_experiment
+from .experiment_batch import run_batch
 from .selection_strategies import (
     ImageNetSelectionStrategy,
     NoveltyImageNetSelectionStrategy,
@@ -57,8 +58,11 @@ def _run_options(parser):
     group = parser.add_argument_group("Run settings")
     group.add_argument("--steps", type=_integer_at_least(1), default=defaults.steps,
                        help=f"Decisions, with 9 candidates each (default: {defaults.steps}).")
+    group.add_argument("--runs", type=_integer_at_least(1),
+                       help="Run a batch of N independent runs using --seed + index (default: one standalone run).")
     group.add_argument("--seed", type=int, default=defaults.seed, help=f"Breeding seed (default: {defaults.seed}).")
-    group.add_argument("--selection-seed", type=int, help="Selection seed (default: derived from --seed).")
+    group.add_argument("--selection-seed", type=int,
+                       help="Selection seed (default: derived from each run seed; explicit value increments in batches).")
     group.add_argument("--size", type=_integer_at_least(2), default=defaults.size,
                        help=f"Image side length (default: {defaults.size}).")
     group.add_argument("--mutation-strength", type=_finite_float(0), default=defaults.mutation_strength,
@@ -235,9 +239,17 @@ def main(argv=None):
     except ValueError as exc:
         parser.error(str(exc))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-%fZ")
-    output = args.output or ROOT / "runs" / f"{args.selection_strategy}-selection-{stamp}-seed{args.seed}"
+    kind = "batch" if args.runs is not None else "selection"
+    output = args.output or ROOT / "runs" / f"{args.selection_strategy}-{kind}-{stamp}-seed{args.seed}"
     if output.exists():
         parser.error(f"Output directory already exists: {output}")
+    if args.runs is not None:
+        manifest = run_batch(strategy_factory=lambda: args.build_strategy(args), output_dir=output,
+                             runs=args.runs, settings=settings)
+        print(f"Saved {manifest['completed_runs']}/{args.runs} completed runs to {output.resolve()}")
+        if manifest["failed_runs"]:
+            raise SystemExit(1)
+        return
     try:
         strategy = args.build_strategy(args)
     except ValueError as exc:

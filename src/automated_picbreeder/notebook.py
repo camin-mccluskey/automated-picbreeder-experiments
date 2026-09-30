@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
+import time
 import traceback
 
 from IPython.display import display
@@ -10,13 +11,16 @@ import ipywidgets as widgets
 
 from .breeding import BreedingSession
 from .cppn import png_bytes, render
-from .persistence import SessionWriter
+from .persistence import SessionWriter, write_json
 
 
 class CPPNPlayground(BreedingSession):
     """Select one parent, retain it, and display eight mutated offspring."""
 
     def __init__(self, seed=7, size=96, save_dir="runs"):
+        self._started = time.perf_counter()
+        self._interaction_events = []
+        self.last_saved_dir = None
         super().__init__(seed=seed)
         self.size = size
         self.save_dir = Path(save_dir)
@@ -60,6 +64,12 @@ class CPPNPlayground(BreedingSession):
         self.reset_button.on_click(lambda _: self._action(self.reset))
         self.save_button.on_click(lambda _: self._action(self.save))
         self._show()
+        self._record_interaction()
+
+    def _record_interaction(self):
+        index = len(self.events) - 1
+        if not self._interaction_events or self._interaction_events[-1]["event_index"] != index:
+            self._interaction_events.append({"event_index": index, "elapsed_seconds": time.perf_counter() - self._started})
 
     def _action(self, callback):
         self.errors.clear_output()
@@ -98,26 +108,43 @@ class CPPNPlayground(BreedingSession):
     def reset(self):
         super().reset()
         self._show()
+        self._record_interaction()
 
     def select(self, position):
         super().select(position)
         self._mark_selection()
+        self._record_interaction()
 
     def evolve(self):
         super().evolve(strength=self.strength.value, topology=self.topology.value)
         self._show()
+        self._record_interaction()
 
     def back(self):
         super().back()
         self._show()
+        self._record_interaction()
 
     def save(self):
-        """Export the shared session format and every generated image."""
+        """Export all branches, images and shared diagnostics without inference."""
+        from .experiment_metrics import save_run_metrics
+
+        elapsed = time.perf_counter() - self._started
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-%fZ")
         directory = self.save_dir / f"cppn-{stamp}"
-        writer = SessionWriter(directory, size=self.size, selection_strategy={"selection_strategy": "human"})
+        writer = SessionWriter(directory, size=self.size, selection_strategy={"selection_strategy": "human"},
+                               settings={"seed": self.seed, "size": self.size,
+                                         "mutation_settings": "Recorded per evolve event; controls below are only the current UI state.",
+                                         "current_mutation_strength": self.strength.value,
+                                         "current_topology": self.topology.value})
         writer.save(self, images=self.images)
-        self.message.value = f"Saved: <code>{escape(str(directory.resolve()))}</code>"
+        write_json(directory / "performance.json", {
+            "elapsed_seconds": elapsed, "events": self._interaction_events,
+            "scope": "Human interaction elapsed time since playground construction, including rendering, deliberation and idle time; excludes this export. Not automated computation time.",
+        })
+        save_run_metrics(directory)
+        self.last_saved_dir = directory
+        self.message.value = f"Saved session, metrics and viewer: <code>{escape(str(directory.resolve()))}</code><br>Open <code>index.html</code> to inspect the results."
         return directory
 
     def display(self):

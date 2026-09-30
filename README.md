@@ -145,6 +145,40 @@ uv run python experiments/run_selection.py --help
 uv run python experiments/run_selection.py offspring-value-imagenet --help
 ```
 
+Add `--runs N` to run the same strategy configuration over seeds `--seed + i`,
+with a fresh strategy for every run:
+
+```sh
+uv run python experiments/run_selection.py novelty --runs 10 --seed 7 --steps 100 --output runs/novelty-batch
+uv run --extra imagenet python experiments/run_selection.py offspring-value-imagenet --runs 10 --seed 7 --steps 100 --device mps --output runs/offspring-imagenet-batch
+```
+
+Every automated run now saves `metrics.json`, `metrics.csv` and
+`performance.json` alongside its original session, images and grids. Batches add
+`batch.json`, `aggregate.json` and `runs.csv`, including failures and final-image
+links. Metrics include pixel change/stagnation, strategy measurements, weighted
+value contributions, prediction errors and computational cost. Aggregation treats
+runs as the independent units. No extra classifier calls are made for reporting.
+See [batch experiments and metric definitions](docs/batch-experiments.md) for the
+seed schedule, Python API, artifact schema and missing-data rules. Notebook 01's
+**Save session** exports the same metrics, plus display history and final ancestry
+for branches and resets. An optional frozen ImageNet pass can compare saved human
+and automated images without changing their selection records; see the notebook's
+saved-metrics section. Every export also includes an interactive, offline
+`index.html` viewer: open it in a browser to inspect images and linked metric charts.
+
+To build a viewer for existing automated runs, batches and manual sessions:
+
+```sh
+uv run python experiments/view_results.py runs/
+```
+
+This writes `runs/index.html`, with final-image galleries, individual run
+inspectors, candidate grids, generation sliders, metric plots, manual display
+history, final ancestry and all generated images. It runs no models and needs
+no web server. See [viewer usage](docs/batch-experiments.md#open-the-interactive-viewer)
+for combining selected runs and sharing reports with their image folders.
+
 The runner starts with nine random CPPNs, asks the selection strategy to choose
 one, retains it unchanged in position 1, and generates eight independently mutated
 children. It repeats this process without resets or backtracking. Human selection
