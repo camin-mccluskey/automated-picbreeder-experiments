@@ -100,7 +100,7 @@ def write_viewer(sources, *, output=None, refresh=True):
     html = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{escape(payload['title'])} · Picbreeder results</title><style>{css}</style></head>
-<body><header class="masthead"><a href="#" id="home">PICBREEDER <span>RESEARCH RECORDS</span></a><span class="offline">LOCAL REPORT · OFFLINE</span></header>
+<body><header class="masthead"><a href="#" id="home">PICBREEDER EXPERIMENTATION<span>RESEARCH RECORDS</span></a><span class="offline">LOCAL REPORT · OFFLINE</span></header>
 <main id="app"></main><dialog id="image-dialog"><button id="close-dialog" aria-label="Close image">Close ×</button><div id="dialog-content"></div></dialog>
 <noscript>This report needs JavaScript enabled. The saved JSON, CSV and PNG files remain available alongside it.</noscript>
 <script id="report-data" type="application/json">{encoded}</script><script>{javascript}</script></body></html>'''
