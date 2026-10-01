@@ -12,7 +12,9 @@
     !finite(value) ? String(value) : Number.isInteger(value) ? value.toLocaleString() :
       Math.abs(value) > 0 && Math.abs(value) < .0001 ? value.toExponential(2) : Number(value.toPrecision(4)).toString();
   const label = key => key.replaceAll('_', ' ').replace(/\b(mse|rmse|mae|rgb)\b/g, word => word.toUpperCase());
-  const strategy = run => run.report?.selection_strategy?.selection_strategy || 'Unrecorded strategy';
+  const strategy = run => run.strategy || run.report?.selection_strategy?.selection_strategy || 'Unrecorded strategy';
+  const runDetails = run => `${strategy(run)} · seed ${fmt(run.seed)}${run.label !== run.experiment ? ` · ${run.label}` : ''}`;
+  const runTitle = run => `${run.experiment} · ${runDetails(run)}`;
   const rows = () => state.run?.report?.generations || [];
   const node = (tag, text, cls) => {
     const element = document.createElement(tag);
@@ -117,6 +119,7 @@
   }
   function overview() {
     state.run=null; app.replaceChildren(); history.replaceState(null,'','#');
+    document.title=`${data.title} · Picbreeder results`;
     app.append(titleBlock('Evolution records', data.title, 'AUTOMATED + HUMAN EXPLORATION'));
     app.append(statBar([['Runs',data.runs.length],['Complete',data.runs.filter(r=>r.status==='complete').length],['Human sessions',data.runs.filter(r=>strategy(r)==='human').length],['Failed / interrupted',data.runs.filter(r=>['failed','interrupted'].includes(r.status)).length]]));
     const toolbar=node('div',null,'toolbar'), gallery=node('div',null,'run-gallery');
@@ -126,8 +129,9 @@
       gallery.replaceChildren();
       data.runs.filter(r=>filter.value==='all'||strategy(r)===filter.value).forEach(run=>{
         const card=button('',()=>openRun(run.id),'run-card'), wrap=node('div',null,'image-wrap');
-        wrap.append(image(run,run.report?.final_image,`Final image, ${strategy(run)}, seed ${run.seed}`));
-        wrap.append(node('span',run.status,`badge ${run.status}`)); card.append(wrap,node('h3',`${strategy(run)} · seed ${fmt(run.seed)}`),node('p',run.label));
+        wrap.append(image(run,run.report?.final_image,`Final image, ${runTitle(run)}`));
+        wrap.append(node('span',run.status,`badge ${run.status}`)); card.append(wrap,node('h3',run.experiment),node('p',`${strategy(run)} · seed ${fmt(run.seed)}`));
+        if(run.label!==run.experiment)card.append(node('p',run.label));
         if(run.report) card.append(node('p',`${run.report.summary.decisions} selections · ${run.image_count ?? run.images.length} generated`));
         gallery.append(card);
       });
@@ -153,8 +157,8 @@
         const hint=node('p','Median and middle 50% of completed runs. Hover a run to identify it; click to inspect.','chart-note');
         const series=[];
         if(show.checked) selectedGroup.run_ids.map(id=>data.runs[id]).filter(r=>r.status==='complete'&&r.report).forEach((r,i)=>series.push({
-          name:`Seed ${r.seed} · ${r.label}`,values:r.series ? (r.series[key] || []) : r.report.generations.map(row=>row.metrics[key]),color:colors[i%colors.length],faint:true,
-          onClick:index=>openRun(r.id,index),onHover:()=>hint.textContent=`Seed ${r.seed} · ${r.label} — click its line to inspect.`}));
+          name:runTitle(r),values:r.series ? (r.series[key] || []) : r.report.generations.map(row=>row.metrics[key]),color:colors[i%colors.length],faint:true,
+          onClick:index=>openRun(r.id,index),onHover:()=>hint.textContent=`${runTitle(r)} — click its line to inspect.`}));
         series.push({name:'Median',values:agg.map(g=>g.metrics[key]?.median),color:'#263f30'});
         const plot=basePlot(series,agg.length,{overview:true,band:agg.map(g=>({min:g.metrics[key]?.q25,max:g.metrics[key]?.q75}))});
         card.append(plot.root,hint); const counts=agg.map(g=>g.metrics[key]?.count||0);
@@ -163,7 +167,7 @@
     }
     app.append(node('h2','Run ledger'));
     app.append(table(['Run','Status','Selections','Presentations','Genomes','Run seconds','Human seconds'],data.runs.map(run=>[
-      button(`${strategy(run)} / ${fmt(run.seed)}`,()=>openRun(run.id)),run.status,run.report?.summary.decisions,
+      button(runTitle(run),()=>openRun(run.id)),run.status,run.report?.summary.decisions,
       run.report?.summary.candidate_presentations,run.image_count ?? run.images.length,run.report?.summary.run_seconds,run.report?.summary.interaction_seconds])));
     app.append(node('p','Pixel change and classifier confidence are diagnostics, not ratings of interestingness. Human interaction time includes deliberation and idle time. Compare configurations and exploration budgets before interpreting differences.','footnote'));
   }
@@ -196,10 +200,11 @@
     state.run=run;state.charts=[];state.gallery='timeline';state.page=0;
     state.index=Math.max(0,Math.min(Number.isInteger(index)?index:Math.max(0,(run.report?.generations.length||1)-1),(run.report?.generations.length||1)-1));
     app.replaceChildren(); app.append(button('← All runs',goOverview,'back'));
-    const heading=titleBlock(`${strategy(run)} / ${fmt(run.seed)}`,run.label,'RUN INSPECTOR');
+    document.title=`${runTitle(run)} · Picbreeder results`;
+    const heading=titleBlock(run.experiment,runDetails(run),'RUN INSPECTOR');
     const switcher=data.navigation
-      ? selectControl(data.navigation.map((r,i)=>[String(i),`${r.strategy} · seed ${fmt(r.seed)} · ${r.label}`]),String(data.current_run),value=>{location.href=data.navigation[Number(value)].url;},'Choose run')
-      : selectControl(data.runs.map(r=>[String(r.id),`${strategy(r)} · seed ${fmt(r.seed)} · ${r.label}`]),String(id),value=>openRun(Number(value)),'Choose run');
+      ? selectControl(data.navigation.map((r,i)=>[String(i),runTitle(r)]),String(data.current_run),value=>{location.href=data.navigation[Number(value)].url;},'Choose run')
+      : selectControl(data.runs.map(r=>[String(r.id),runTitle(r)]),String(id),value=>openRun(Number(value)),'Choose run');
     heading.append(switcher);app.append(heading);
     if(run.error)app.append(node('p',run.error,'note error'));
     if(!run.report){

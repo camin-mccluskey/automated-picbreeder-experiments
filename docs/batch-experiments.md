@@ -111,6 +111,12 @@ Open it directly in a browser. It needs no running server, external JavaScript,
 internet connection or model inference. A batch's viewer is updated as runs
 finish; reload the file to see the latest snapshot.
 
+Run cards, inspector headings, navigation and the ledger include the experiment
+name from its output directory, alongside the strategy, seed and batch run folder
+(for example `run-0000-seed7`). This distinguishes repeated experiments with the
+same strategies and seeds. Standalone runs use their own output-directory name;
+nested experiments include their path within the collection.
+
 Build or refresh a viewer for existing results and open it in your default
 browser. Run `uv run viewer` from the repository root to collect all of `runs/`.
 Pass `--no-open` to generate HTML without opening a browser. Explicit paths and

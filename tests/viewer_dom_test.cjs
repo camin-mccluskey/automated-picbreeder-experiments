@@ -41,11 +41,25 @@ const findButton=text=>all(app).find(e=>e.tagName==='BUTTON'&&e.textContent===te
 const click=(button)=>{assert.ok(button,'expected button');button.onclick({preventDefault(){},stopPropagation(){}});};
 assert.match(app.textContent,/Evolution records/);
 const cards=app.querySelectorAll('.run-card');assert.equal(cards.length,payload.runs.length);
+cards.forEach((card,i)=>{
+ const run=payload.runs[i];
+ assert.equal(card.querySelector('h3').textContent,run.experiment);
+ assert.ok(card.textContent.includes(`${run.report.selection_strategy.selection_strategy} · seed ${run.seed}`));
+ assert.ok(card.textContent.includes(run.label));
+});
+const repeated=payload.runs.filter(r=>r.label==='run-0000-seed7');
+assert.equal(repeated.length,2);
+assert.notEqual(cards[repeated[0].id].textContent,cards[repeated[1].id].textContent);
+const ledger=app.querySelector('table');
+repeated.forEach(run=>assert.ok(ledger.textContent.includes(`${run.experiment} · novelty · seed 7 · run-0000-seed7`)));
 click(cards[0]);
 assert.equal(context.location.href,payload.runs[0].viewer_url);
 const firstDetail=detail(payload.runs[0]);
 mount(firstDetail);
 const switcher=app.querySelectorAll('select').find(s=>s.getAttribute('aria-label')==='Choose run');
+assert.equal(app.querySelector('h1').textContent,firstDetail.runs[0].experiment);
+firstDetail.navigation.forEach((run,i)=>assert.ok(switcher.children[i].textContent.startsWith(`${run.experiment} · `)));
+assert.equal(new Set(switcher.children.map(option=>option.textContent)).size,firstDetail.navigation.length);
 switcher.value='1';switcher.onchange();
 assert.equal(context.location.href,firstDetail.navigation[1].url);
 assert.match(app.textContent,/RUN INSPECTOR/);

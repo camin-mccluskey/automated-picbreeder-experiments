@@ -27,6 +27,7 @@ def test_single_run_viewer_is_offline_and_preserves_metrics(tmp_path):
     assert html.is_file()
     report = payload(html)
     run = report["runs"][0]
+    assert run["experiment"] == directory.name
     assert len(run["images"]) == 25
     assert len(run["report"]["generations"]) == 3
     assert run["report"]["generations"][0]["metrics"]["novelty_selected"] is None
@@ -135,6 +136,9 @@ def test_viewer_javascript_interactions(tmp_path):
     run_batch(strategy_factory=lambda: NoveltySelectionStrategy(novelty_reference="previous-parent"),
               output_dir=tmp_path / "batch", runs=2,
               settings=ExperimentSettings(steps=3, size=4), progress=None)
+    run_batch(strategy_factory=lambda: NoveltySelectionStrategy(novelty_reference="previous-parent"),
+              output_dir=tmp_path / "batch-repeat", runs=1,
+              settings=ExperimentSettings(steps=3, size=4), progress=None)
     ui = CPPNPlayground(size=4, save_dir=tmp_path / "manual")
     ui.select(1)
     ui.evolve()
@@ -146,6 +150,32 @@ def test_viewer_javascript_interactions(tmp_path):
     result = subprocess.run([node, str(Path(__file__).with_name("viewer_dom_test.cjs")), str(html)],
                             check=True, capture_output=True, text=True)
     assert "interaction unit checks passed" in result.stdout
+
+
+def test_experiment_name_survives_collection_and_direct_run_views(tmp_path):
+    for name in ("experiment-one", "experiment-two"):
+        run_batch(strategy_factory=RandomSelectionStrategy, output_dir=tmp_path / name,
+                  runs=1, settings=ExperimentSettings(steps=1, size=4), progress=None)
+    html = write_viewer(tmp_path, output=tmp_path / "reports" / "collection.html")
+    runs = payload(html)["runs"]
+    assert [run["experiment"] for run in runs] == ["experiment-one", "experiment-two"]
+    assert runs[0]["label"] == runs[1]["label"] == "run-0000-seed7"
+    for run in runs:
+        detail = payload(html.parent / unquote(run["viewer_url"]))
+        assert detail["runs"][0]["experiment"] == run["experiment"]
+        assert [item["experiment"] for item in detail["navigation"]] == ["experiment-one", "experiment-two"]
+        directory = tmp_path / run["experiment"] / run["label"]
+        direct = payload(write_viewer(directory))["runs"][0]
+        assert direct["experiment"] == run["experiment"]
+        assert direct["label"] == run["label"]
+
+
+def test_nested_runs_with_identical_folder_names_have_distinct_titles(tmp_path):
+    for name in ("first", "second"):
+        run_experiment(selection_strategy=RandomSelectionStrategy(), output_dir=tmp_path / name / "run",
+                       settings=ExperimentSettings(steps=1, size=4), progress=None)
+    runs = payload(write_viewer(tmp_path))["runs"]
+    assert [run["experiment"] for run in runs] == ["first/run", "second/run"]
 
 
 def test_cached_viewer_avoids_session_parsing_and_png_loading(tmp_path, monkeypatch):

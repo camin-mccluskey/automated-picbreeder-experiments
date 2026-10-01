@@ -127,6 +127,7 @@ def write_viewer(sources, *, output=None, refresh=False, jobs=None,
     roots = list(dict.fromkeys(root.resolve() for path in paths for root in _discover(path)))
     roots = [root for root in roots if not any(parent != root and (parent / "batch.json").exists()
                                                and root.is_relative_to(parent) for parent in roots)]
+    collection_root = Path(os.path.commonpath([path.resolve() for path in paths]))
     payload = {"title": paths[0].name if len(paths) == 1 else "Experiment collection", "runs": [], "groups": []}
     entries = []
     batches = set()
@@ -134,7 +135,11 @@ def write_viewer(sources, *, output=None, refresh=False, jobs=None,
         batch = json.loads((root / "batch.json").read_text()) if (root / "batch.json").exists() else None
         if batch:
             batches.add(group_index)
-        group = {"label": root.name, "run_ids": [], "aggregate": None}
+        experiment = root.parent if not batch and (root.parent / "batch.json").is_file() else root
+        experiment_name = (str(experiment.relative_to(collection_root))
+                           if experiment != collection_root and experiment.is_relative_to(collection_root)
+                           else experiment.name)
+        group = {"label": experiment_name, "run_ids": [], "aggregate": None}
         for entry in batch["runs"] if batch else [{}]:
             directory = (root / entry["directory"]).resolve() if batch else root
             if not directory.is_relative_to(root):
@@ -162,6 +167,8 @@ def write_viewer(sources, *, output=None, refresh=False, jobs=None,
     else:
         for index in pending:
             runs[index] = _run_task(tasks[index])
+    for run, (_, _, group_index) in zip(runs, entries, strict=True):
+        run["experiment"] = payload["groups"][group_index]["label"]
     for group_index in batches:
         group = payload["groups"][group_index]
         root = roots[group_index]
@@ -175,14 +182,15 @@ def write_viewer(sources, *, output=None, refresh=False, jobs=None,
                                   key: {stat: value[stat] for stat in ("median", "q25", "q75", "count")}
                                   for key, value in row["metrics"].items()}}
                                   for row in aggregate["generations"]]}
-    navigation = [{"label": run["label"], "seed": run["seed"],
+    navigation = [{"experiment": run["experiment"], "label": run["label"], "seed": run["seed"],
                    "strategy": (run["report"] or {}).get("selection_strategy", {}).get("selection_strategy", "Unrecorded strategy"),
                    "url": quote(detail.name, safe="")}
                   for run, detail in zip(runs, details, strict=True)] if overview else []
     for index, (run, detail, (directory, _, group_index)) in enumerate(zip(runs, details, entries, strict=True)):
         run.update(id=index, group=group_index)
         if overview:
-            _write_page({"title": run["label"], "runs": [run | {"id": 0, "group": 0}], "groups": [],
+            title = run["experiment"] + (f" · {run['label']}" if run["label"] != run["experiment"] else "")
+            _write_page({"title": title, "runs": [run | {"id": 0, "group": 0}], "groups": [],
                          "navigation": navigation, "current_run": index,
                          "overview": quote(os.path.relpath(output, detail.parent), safe="/")}, detail)
             payload["runs"].append(_overview_run(run, directory, detail, output, include_series=group_index in batches))
