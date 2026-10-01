@@ -42,6 +42,33 @@ RESPONSE_FORMAT = {
     },
 }
 
+SCRATCHPAD_PROTOCOL = (
+    "You are selecting one of nine candidate images. Each image is preceded by "
+    "its label, Image 0 through Image 8. Your selected image will be retained "
+    "unchanged and used as the parent of eight independently mutated children. "
+    "The first grid contains nine random images; on subsequent grids, Image 0 "
+    "is your previous selection and Images 1 through 8 are its children. "
+    "Whatever index you select now, that selected image will be Image 0 in "
+    "the next generation shown to the next VLM call. For example, if you select "
+    "Image 4 now, the next call will see that same image as Image 0, alongside "
+    "eight new children labelled Image 1 through Image 8. Image numbers are "
+    "positions in the current grid, not persistent identities. "
+    "Update your scratchpad with observations and goals useful for future "
+    "selections. You may revise or abandon goals as interesting features emerge. "
+    "Write the replacement note for the next call: refer to your selected image "
+    "as 'the retained parent (Image 0 in the next grid)' and describe its visual "
+    "features. Describe other images by their visual features, not their current "
+    "numbers; those candidates will not be carried forward. "
+    "This scratchpad is your only memory between decisions and starts empty. "
+    "Keep it concise and free-form; return the complete replacement note. "
+    "Return a JSON object with selected_index (an integer from 0 to 8), reason "
+    "(a brief explanation of your choice), and scratchpad (a nonempty string)."
+)
+SCRATCHPAD_RESPONSE_FORMAT = deepcopy(RESPONSE_FORMAT)
+SCRATCHPAD_RESPONSE_FORMAT["json_schema"]["name"] = "image_selection_with_scratchpad"
+SCRATCHPAD_RESPONSE_FORMAT["json_schema"]["schema"]["properties"]["scratchpad"] = {"type": "string"}
+SCRATCHPAD_RESPONSE_FORMAT["json_schema"]["schema"]["required"].append("scratchpad")
+
 # Transport timing must not advance either the selection or breeding RNG.
 _TIMING_RANDOM = SystemRandom()
 _BACKOFF_INITIAL = 2.0
@@ -74,7 +101,7 @@ def _retry_after_seconds(exc):
     return None
 
 
-def _parse_choice(response):
+def _parse_choice(response, *, scratchpad=False):
     choices = response.get("choices", [])
     if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
         raise ValueError("Expected one complete VLM response (finish_reason=stop).")
@@ -88,18 +115,25 @@ def _parse_choice(response):
         choice = json.loads(content)
     except ValueError:
         raise ValueError("The VLM returned invalid JSON.") from None
-    if not isinstance(choice, dict) or set(choice) != {"selected_index", "reason"}:
-        raise ValueError("Expected exactly selected_index and reason in the VLM response.")
+    fields = {"selected_index", "reason", "scratchpad"} if scratchpad else {"selected_index", "reason"}
+    if not isinstance(choice, dict) or set(choice) != fields:
+        raise ValueError(f"Expected exactly {', '.join(sorted(fields))} in the VLM response.")
     position = choice["selected_index"]
     if type(position) is not int or not 0 <= position < 9:
         raise ValueError("VLM selected_index must be an integer from 0 to 8.")
     if not isinstance(choice["reason"], str) or not choice["reason"].strip():
         raise ValueError("The VLM must supply a nonempty reason.")
+    if scratchpad and (not isinstance(choice["scratchpad"], str) or not choice["scratchpad"].strip()):
+        raise ValueError("The VLM must supply a nonempty scratchpad string.")
     return choice
 
 
 class OpenRouterSelection:
     """Own request construction, credential loading, retries and response audit."""
+
+    protocol = PROTOCOL
+    response_format = RESPONSE_FORMAT
+    uses_scratchpad = False
 
     def __init__(self, *, model, prompt, temperature, max_completion_tokens,
                  timeout, max_retries, env_file, client):
@@ -139,7 +173,7 @@ class OpenRouterSelection:
 
     def describe(self):
         return {
-            "model": self.model, "prompt": self.prompt, "protocol": PROTOCOL,
+            "model": self.model, "prompt": self.prompt, "protocol": self.protocol,
             "temperature": self.temperature, "max_completion_tokens": self.max_completion_tokens,
             "timeout": self.timeout, "max_retries": self.max_retries,
             "retry_policy": {
@@ -149,18 +183,22 @@ class OpenRouterSelection:
                 "min_request_interval_seconds": _MIN_REQUEST_INTERVAL,
                 "request_jitter_seconds": _REQUEST_JITTER,
             },
-            "response_format": deepcopy(RESPONSE_FORMAT),
+            "response_format": deepcopy(self.response_format),
             "provider": {"require_parameters": True},
             "presentation": "nine separate full-resolution PNGs, labelled Image 0 through Image 8",
             "history_turns": 0, "sdk": "openrouter", "sdk_version": version("openrouter"),
         }
 
-    def select(self, images):
+    def select(self, images, *, scratchpad=None):
         import httpx
         from openrouter import OpenRouter
         from .selection_strategies import SelectionError
 
         content = [{"type": "text", "text": self.prompt}]
+        if self.uses_scratchpad:
+            if not isinstance(scratchpad, str):
+                raise ValueError("Supply the current scratchpad as a string.")
+            content.append({"type": "text", "text": "Current scratchpad:\n" + scratchpad})
         hashes = []
         for i, pixels in enumerate(images):
             png = png_bytes(pixels)
@@ -173,13 +211,15 @@ class OpenRouterSelection:
             ])
         request = dict(
             model=self.model,
-            messages=[{"role": "system", "content": PROTOCOL}, {"role": "user", "content": content}],
-            response_format=deepcopy(RESPONSE_FORMAT), provider={"require_parameters": True},
+            messages=[{"role": "system", "content": self.protocol}, {"role": "user", "content": content}],
+            response_format=deepcopy(self.response_format), provider={"require_parameters": True},
             temperature=self.temperature, max_completion_tokens=self.max_completion_tokens,
             stream=False, retries=None, timeout_ms=max(1, int(self.timeout * 1000)),
             x_open_router_metadata="enabled",
         )
         audit = {"configuration": self.describe(), "image_sha256": hashes, "attempts": []}
+        if self.uses_scratchpad:
+            audit["scratchpad_before"] = scratchpad
         started = time.perf_counter()
         context = nullcontext(self.client) if self.client is not None else OpenRouter(api_key=self._api_key)
         with context as client:
@@ -222,7 +262,7 @@ class OpenRouterSelection:
                     ) from None
                 record["seconds"] = time.perf_counter() - attempt_start
                 try:
-                    choice = _parse_choice(response)
+                    choice = _parse_choice(response, scratchpad=self.uses_scratchpad)
                 except ValueError as exc:
                     record["validation_error"] = str(exc)
                     raise SelectionError(str(exc), metadata=self._metadata(audit, started)) from None
@@ -244,3 +284,11 @@ class OpenRouterSelection:
             "api_seconds": time.perf_counter() - started,
         }
         return {"vlm": audit, "inference": inference}
+
+
+class OpenRouterScratchpadSelection(OpenRouterSelection):
+    """Use the shared transport with a replacement-note response contract."""
+
+    protocol = SCRATCHPAD_PROTOCOL
+    response_format = SCRATCHPAD_RESPONSE_FORMAT
+    uses_scratchpad = True

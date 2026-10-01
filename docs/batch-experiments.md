@@ -353,7 +353,14 @@ to client attempts, not confirmed provider processing or internal routing attemp
 `evaluated_images` and `classifier_images` remain zero for VLM selection.
 Failure diagnostics and any reported costs for the unselected final grid are
 in `selection_failure.json`; completed-decision metrics exclude that request.
-See [VLM selection](strategies/vlm.md) for options and replay limitations.
+The scratchpad variant uses the same API counters and null numeric measurements.
+Each decision's `vlm` metadata additionally records `scratchpad_before` and the
+accepted replacement `scratchpad`. A failed request records the input note and
+response diagnostics without advancing memory. Batch runs start with independent,
+empty notes. Historical images remain saved locally but are not sent to the model;
+the latest note adds tokens without adding requests or image submissions.
+See [VLM selection](strategies/vlm.md) and
+[VLM with a scratchpad](strategies/vlm-scratchpad.md) for options and replay limitations.
 
 ### Novelty
 

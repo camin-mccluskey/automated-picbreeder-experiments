@@ -173,6 +173,7 @@ Every selection event records its `position`, `genome`, ordered `displayed` IDs,
 | Offspring value | Current-image measurements, frozen child targets, original forecasts, delayed errors and predictor training records | Current-image value plus the weighted forecast after warm-up |
 | ImageNet | Full measurement values, names and provenance | `mode: "greedy"` or `"random"`, one maximum-class score per candidate |
 | VLM | `null` | `mode: "vlm"`, `scores: null`, metadata with selected index/reason, request settings, responses and API costs |
+| VLM + scratchpad | `null` | `mode: "vlm-scratchpad"`, `scores: null`, VLM metadata plus `scratchpad_before` and the accepted replacement `scratchpad` |
 
 Measurements and scores belong to decisions, so repeated parent evaluations are
 recorded separately. Measurement rows follow `displayed`; column positions follow

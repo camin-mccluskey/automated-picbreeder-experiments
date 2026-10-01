@@ -113,17 +113,47 @@ class VLMSelectionStrategy:
 
     def choose(self, images: Sequence[ImageArray], *, rng: Random) -> SelectionDecision:
         # Fixed presentation order and no local random choice: do not consume rng.
+        position, metadata = self._select(images)
+        return SelectionDecision(position=position, mode="vlm", metadata=metadata)
+
+    def _select(self, images, **kwargs):
         if len(images) != 9:
             raise ValueError("VLM selection requires exactly nine RGB images.")
         for image in images:
             validate_image(image)
             if image.ndim != 3:
                 raise ValueError("VLM selection requires RGB images.")
-        position, metadata = self._selector.select(images)
-        return SelectionDecision(position=position, mode="vlm", metadata=metadata)
+        return self._selector.select(images, **kwargs)
 
     def describe(self) -> dict:
         return {"selection_strategy": "vlm", **self._selector.describe()}
+
+
+class VLMScratchpadSelectionStrategy(VLMSelectionStrategy):
+    """Choose from the current grid with one model-written, rewritable note."""
+
+    def __init__(self, *, model=None, prompt="find something interesting",
+                 temperature=0.0, max_completion_tokens=1024, timeout=120.0,
+                 max_retries=5, env_file=None, client=None):
+        from .vlm import OpenRouterScratchpadSelection
+
+        self._selector = OpenRouterScratchpadSelection(
+            model=model, prompt=prompt, temperature=temperature,
+            max_completion_tokens=max_completion_tokens, timeout=timeout,
+            max_retries=max_retries, env_file=env_file, client=client,
+        )
+        self._scratchpad = ""
+
+    def choose(self, images: Sequence[ImageArray], *, rng: Random) -> SelectionDecision:
+        position, metadata = self._select(images, scratchpad=self._scratchpad)
+        decision = SelectionDecision(position=position, mode="vlm-scratchpad", metadata=metadata)
+        # A failed request or invalid response must not replace the previous note.
+        self._scratchpad = metadata["vlm"]["scratchpad"]
+        return decision
+
+    def describe(self) -> dict:
+        return {"selection_strategy": "vlm-scratchpad", **self._selector.describe(),
+                "memory": "one rewritable text note, initially empty; no historical images"}
 
 
 def _percentile_ranks(values: NDArray) -> NDArray:

@@ -35,6 +35,7 @@ all applicable options. Use a fresh strategy and output directory for each run.
 | [Offspring value](docs/strategies/offspring-value.md) | Add predicted best-child or mean-child value using patch predictability |
 | [Offspring value + ImageNet](docs/strategies/offspring-value-imagenet.md) | Add the same offspring forecast using frozen classification confidence |
 | [VLM](docs/strategies/vlm.md) | Ask an OpenRouter VLM to choose the most interesting of nine images |
+| [VLM + scratchpad](docs/strategies/vlm-scratchpad.md) | Ask a VLM to find something interesting using one rewritable note to allow goal tracking/switching |
 
 ```sh
 uv run python experiments/run_selection.py random --steps 100 --seed 7

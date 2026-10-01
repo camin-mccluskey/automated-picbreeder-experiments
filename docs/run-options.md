@@ -2,7 +2,7 @@
 
 [Strategy guides](../README.md#automated-selection-experiments) · [Usage](usage.md)
 
-All eight strategies accept these options, after the strategy subcommand.
+All nine strategies accept these options, after the strategy subcommand.
 `--help` (or `-h`) lists only options applicable to that command. Abbreviated or
 unrelated option names are rejected. Commands run from the repository root.
 
@@ -33,9 +33,12 @@ stateful strategies must also be constructed afresh. Matching seeds does not kee
 candidate grids identical after choices diverge. Match settings, environment,
 checkpoint, device and batching for replay; cross-device equality is not promised.
 Restart notebook kernels after imported modules change.
-VLM selection does not consume the selection RNG or send an API seed. Remote
+Neither VLM strategy consumes the selection RNG or sends an API seed. Remote
 choices are not guaranteed reproducible, even at temperature zero; exact model,
 prompt, settings and returned choices are recorded.
+[VLM with a scratchpad](strategies/vlm-scratchpad.md) additionally records the
+note supplied and its replacement per decision. Only the latest note is sent
+with the current images; each fresh batch run starts with an empty note.
 
 With S decisions, every automated strategy presents `9*S` candidates and generates
 `9 + 8*(S-1)` genomes. Frozen classifiers evaluate all nine images on every grid,
@@ -44,8 +47,8 @@ including retained parents and exploratory turns. Novelty records `9*S` rows
 Pure random selection evaluates no images. Patch observers additionally process
 16 masked inputs per candidate and train online; report those costs separately.
 `evaluated_images` counts candidate rows, not model calls or training examples.
-VLM selection produces no numeric evaluation rows: `evaluated_images` is zero.
-Its separate `api_requests` and `api_images_submitted` counters include retries;
+Both VLM strategies produce no numeric evaluation rows: `evaluated_images` is zero.
+Their separate `api_requests` and `api_images_submitted` counters include retries;
 without retries, S decisions make S requests containing 9*S images. API usage,
 reported USD costs and elapsed time are saved separately; unknown values stay
 null. VLM calls are automatically paced with jitter and honor server retry waits;

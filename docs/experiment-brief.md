@@ -21,11 +21,15 @@ children. The networks map pixel coordinates to hue, saturation and brightness.
 NEAT-Python supplies genome initialization and mutation; the project does not use
 its population, speciation or crossover algorithm.
 
-The [eight selection strategies](../README.md#automated-selection-experiments)
+The [nine selection strategies](../README.md#automated-selection-experiments)
 cover random choice, pixel novelty, frozen ImageNet confidence, learned masked-pixel
 accuracy, forecasts of immediate offspring value and direct VLM choices.
 The VLM sees nine separate images in one request and chooses using the prompt
 "choose the most interesting image to you", without conversation history.
+The scratchpad variant uses "find something interesting" and carries forward one
+model-written, rewritable note of observations and goals. It sends only the latest
+note and current images. The note is replaced on each successful decision and all
+versions are saved for inspection.
 Observer and predictor
 networks are separate from the CPPNs being evolved. The strategy guides describe
 their exact rules, defaults, warm-up schedules and limitations.
@@ -61,7 +65,10 @@ or familiar images. Pixel diversity can reward noise. Offspring forecasts concer
 the next eight children, not long-term potential. Improvements in these quantities
 do not by themselves demonstrate UFR or sustained open-endedness.
 VLM choices express a remote model's prompt-conditioned preferences; neither
-those choices nor its stated reasons establish human interestingness or UFR.
+those choices, its stated reasons nor its scratchpad establish human
+interestingness or UFR. Scratchpad descriptions can omit or misinterpret earlier
+images. The two VLM defaults differ in prompt and breeding instructions as well
+as memory, so a direct comparison does not isolate memory alone.
 Record API calls, usage and cost separately from local classifier evaluations.
 
 Comparisons need matched mutation settings, image sizes, independent seed schedules

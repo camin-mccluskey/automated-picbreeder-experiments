@@ -155,13 +155,13 @@ strategies that use Torch but do not download ImageNet weights.
 
 ## OpenRouter VLM
 
-Only `vlm` accepts these options. Requires `uv run --extra vlm` and
+Both `vlm` and `vlm-scratchpad` accept these options. Requires `uv run --extra vlm` and
 `OPENROUTER_API_KEY` in the repository `.env` or environment.
 
 | CLI option | Default | Python mapping and constraint |
 | --- | --- | --- |
 | `--vlm-model` | unset; required to run | `model`: nonempty explicit OpenRouter model ID supporting nine images and structured output |
-| `--vlm-prompt` | `choose the most interesting image to you` | `prompt`: nonempty text, saved exactly |
+| `--vlm-prompt` | `vlm`: `choose the most interesting image to you`; `vlm-scratchpad`: `find something interesting` | `prompt`: nonempty text, saved exactly |
 | `--temperature` | `0.0` | `temperature`: finite in [0, 2]; no deterministic replay guarantee |
 | `--max-completion-tokens` | `1024` | `max_completion_tokens`: integer >= 1; total output budget, including reasoning where applicable |
 | `--timeout` | `120.0` | `timeout`: finite positive seconds per SDK attempt |
@@ -169,6 +169,9 @@ Only `vlm` accepts these options. Requires `uv run --extra vlm` and
 | `--env-file` | repository `.env` | `env_file=None`: default path; explicit path accepted; environment variable takes precedence |
 
 Python-only `client=None` allows injecting an SDK client; the caller owns its
-lifetime and credentials. The strategy sends no history or selection RNG seed.
-No local model trains. Read [VLM selection](vlm.md) for request formatting,
-validation, failure records, retry accounting and scientific limitations.
+lifetime and credentials. Neither strategy sends conversation history or a
+selection RNG seed. `vlm-scratchpad` sends its latest rewritable text note; `vlm`
+sends no memory. The completion budget includes the replacement note as well as
+the choice and reason. No local model trains. Read [VLM selection](vlm.md) and
+[VLM with a scratchpad](vlm-scratchpad.md) for request formatting, validation,
+failure records, retry accounting and scientific limitations.

@@ -12,6 +12,8 @@ The strategy does not define interestingness or add recognisability, realism,
 novelty or complexity criteria. Separate protocol text explains the numbered
 images and asks for one index and a brief reason. Each call is independent:
 there is no previous conversation, archive, training or warm-up.
+For a model-written note carried between decisions, use the separate
+[VLM with a scratchpad](vlm-scratchpad.md) strategy.
 
 ## Setup and use
 

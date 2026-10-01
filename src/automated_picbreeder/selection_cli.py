@@ -21,6 +21,7 @@ from .selection_strategies import (
     OffspringValueSelectionStrategy,
     RandomSelectionStrategy,
     VLMSelectionStrategy,
+    VLMScratchpadSelectionStrategy,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -164,18 +165,26 @@ def _random(parser):
     parser.set_defaults(build_strategy=lambda args: RandomSelectionStrategy())
 
 
-def _vlm(parser):
+def _vlm_options(parser, strategy_type, default_prompt):
     group = parser.add_argument_group("OpenRouter VLM")
     group.add_argument("--vlm-model", help="Explicit OpenRouter model ID; required to run.")
-    group.add_argument("--vlm-prompt", help='Selection instruction (default: "choose the most interesting image to you").')
+    group.add_argument("--vlm-prompt", help=f'Selection instruction (default: "{default_prompt}").')
     group.add_argument("--temperature", type=_finite_float(0, 2), help="Sampling temperature in [0, 2] (default: 0).")
     group.add_argument("--max-completion-tokens", type=_integer_at_least(1), help="Output token budget (default: 1024).")
     group.add_argument("--timeout", type=_finite_float(0, exclusive_minimum=True), help="Seconds per API attempt (default: 120).")
     group.add_argument("--max-retries", type=_integer_at_least(0), help="Extra attempts for transient API errors (default: 5).")
     group.add_argument("--env-file", type=Path, help="Credentials file (default: repository .env; environment takes precedence).")
-    parser.set_defaults(build_strategy=lambda args: VLMSelectionStrategy(**_provided(
+    parser.set_defaults(build_strategy=lambda args: strategy_type(**_provided(
         args, "temperature", "max_completion_tokens", "timeout", "max_retries", "env_file",
         model="vlm_model", prompt="vlm_prompt")))
+
+
+def _vlm(parser):
+    _vlm_options(parser, VLMSelectionStrategy, "choose the most interesting image to you")
+
+
+def _vlm_scratchpad(parser):
+    _vlm_options(parser, VLMScratchpadSelectionStrategy, "find something interesting")
 
 
 def _novelty(parser):
@@ -240,6 +249,7 @@ COMMANDS = (
     ("offspring-value-imagenet", "Add offspring forecasts to novelty and ImageNet confidence.", _offspring_value_imagenet),
     ("imagenet", "Maximize ImageNet confidence with optional random exploration.", _imagenet),
     ("vlm", "Ask an OpenRouter vision-language model to choose from all nine images.", _vlm),
+    ("vlm-scratchpad", "Choose with an OpenRouter VLM and one rewritable note.", _vlm_scratchpad),
 )
 
 

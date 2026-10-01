@@ -25,18 +25,23 @@ from automated_picbreeder.experiment import ExperimentSettings, run_experiment
 from automated_picbreeder.experiment_batch import run_batch
 from automated_picbreeder.experiment_viewer import write_viewer
 from automated_picbreeder.selection_cli import build_parser
-from automated_picbreeder.selection_strategies import SelectionError, VLMSelectionStrategy
+from automated_picbreeder.selection_strategies import (
+    SelectionError, VLMSelectionStrategy, VLMScratchpadSelectionStrategy,
+)
 from automated_picbreeder.vlm import PROTOCOL
 from automated_picbreeder import vlm
 
 
-def response(position=4, *, text=None, finish="stop", usage=True):
+def response(position=4, *, text=None, finish="stop", usage=True, scratchpad=None):
+    choice = {"selected_index": position, "reason": "Its repeated curves interest me."}
+    if scratchpad is not None:
+        choice["scratchpad"] = scratchpad
     result = {
         "id": "generation-test", "created": 1, "model": "test/vision",
         "object": "chat.completion", "system_fingerprint": None,
         "choices": [{"index": 0, "finish_reason": finish, "logprobs": None,
                      "message": {"role": "assistant", "content": text if text is not None else
-                                 json.dumps({"selected_index": position, "reason": "Its repeated curves interest me."})}}],
+                                 json.dumps(choice)}}],
     }
     if usage:
         result["usage"] = {"prompt_tokens": 90, "completion_tokens": 20, "total_tokens": 110, "cost": .002}
@@ -249,12 +254,14 @@ def test_adapter_disables_injected_sdk_retries_and_zero_retries_never_sleeps(sdk
     assert error.value.metadata["vlm"]["attempts"][0]["retry_after_seconds"] == 120
 
 
-def test_run_preserves_breeding_parity_records_costs_and_offline_viewer(tmp_path, sdk):
+@pytest.mark.parametrize("strategy_type", [VLMSelectionStrategy, VLMScratchpadSelectionStrategy])
+def test_run_preserves_breeding_parity_records_costs_and_offline_viewer(tmp_path, sdk, strategy_type):
     requests, positions = [], iter([6, 0, 8])
     def handler(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json=response(next(positions)))
-    strategy = VLMSelectionStrategy(model="test/vision", client=sdk(handler))
+        note = f"Note {len(requests)}" if strategy_type is VLMScratchpadSelectionStrategy else None
+        return httpx.Response(200, json=response(next(positions), scratchpad=note))
+    strategy = strategy_type(model="test/vision", client=sdk(handler))
     output = tmp_path / "run"
     summary = run_experiment(selection_strategy=strategy, output_dir=output,
                              settings=ExperimentSettings(steps=3, size=8), progress=None)
@@ -279,11 +286,20 @@ def test_run_preserves_breeding_parity_records_costs_and_offline_viewer(tmp_path
     assert (output / "index.html").exists()
     assert "api_requests" in (output / "metrics.csv").read_text()
     assert "test-secret" not in (output / "session.json").read_text()
+    if strategy_type is VLMScratchpadSelectionStrategy:
+        for index, event in enumerate(selections):
+            audit = event["decision"]["metadata"]["vlm"]
+            assert audit["scratchpad_before"] == (f"Note {index}" if index else "")
+            assert audit["scratchpad"] == f"Note {index + 1}"
+            assert event["decision"]["mode"] == "vlm-scratchpad"
+        assert report["generations"][1]["decision_metadata"]["vlm"]["scratchpad"] == "Note 2"
 
 
-def test_failure_saves_grid_and_response_audit_without_selecting(tmp_path, sdk):
-    strategy = VLMSelectionStrategy(model="test/vision", client=sdk(
-        lambda request: httpx.Response(200, json=response(position=99))))
+@pytest.mark.parametrize("strategy_type", [VLMSelectionStrategy, VLMScratchpadSelectionStrategy])
+def test_failure_saves_grid_and_response_audit_without_selecting(tmp_path, sdk, strategy_type):
+    note = "Invalid selection must not save this note as accepted." if strategy_type is VLMScratchpadSelectionStrategy else None
+    strategy = strategy_type(model="test/vision", client=sdk(
+        lambda request: httpx.Response(200, json=response(position=99, scratchpad=note))))
     output = tmp_path / "run"
     with pytest.raises(SelectionError):
         run_experiment(selection_strategy=strategy, output_dir=output,
@@ -294,6 +310,9 @@ def test_failure_saves_grid_and_response_audit_without_selecting(tmp_path, sdk):
     failure = json.loads((output / "selection_failure.json").read_text())
     assert failure["generation"] == 0 and len(failure["candidate_ids"]) == 9
     assert failure["metadata"]["inference"]["api_requests"] == 1
+    if strategy_type is VLMScratchpadSelectionStrategy:
+        assert failure["metadata"]["vlm"]["scratchpad_before"] == ""
+        assert "scratchpad" not in failure["metadata"]["vlm"]
 
 
 def test_env_file_loading_environment_precedence_and_missing_key(tmp_path, monkeypatch):
@@ -357,13 +376,15 @@ def test_missing_usage_remains_null_in_metrics_and_run_totals(tmp_path, sdk):
     {"model": "test/vision", "max_retries": -1}, {"model": "test/vision", "timeout": 0},
     {"model": "test/vision", "temperature": float("nan")},
     {"model": "test/vision", "max_completion_tokens": True}])
-def test_invalid_configuration_before_request(kwargs):
+@pytest.mark.parametrize("strategy_type", [VLMSelectionStrategy, VLMScratchpadSelectionStrategy])
+def test_invalid_configuration_before_request(kwargs, strategy_type):
     with pytest.raises(ValueError):
-        VLMSelectionStrategy(client=object(), **kwargs)
+        strategy_type(client=object(), **kwargs)
 
 
-def test_invalid_grid_before_request(images):
-    strategy = VLMSelectionStrategy(model="test/vision", client=object())
+@pytest.mark.parametrize("strategy_type", [VLMSelectionStrategy, VLMScratchpadSelectionStrategy])
+def test_invalid_grid_before_request(images, strategy_type):
+    strategy = strategy_type(model="test/vision", client=object())
     for invalid in (images[:8], [image[:, :, 0] for image in images]):
         with pytest.raises(ValueError):
             strategy.choose(invalid, rng=Random(0))
@@ -381,3 +402,118 @@ def test_cli_forwards_vlm_options_without_classifier_options(tmp_path, monkeypat
     for extra in (["--device", "cpu"], ["--imagenet-model", "resnet18"], ["--temperature", "nan"]):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["vlm", *extra])
+
+
+def test_scratchpad_replaces_note_and_sends_only_current_images(sdk, images):
+    requests, decisions = [], []
+    notes = ["Explore branches.", "Now pursue rings.", "Keep the nested rings."]
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=response(scratchpad=notes[len(requests) - 1]))
+    strategy = VLMScratchpadSelectionStrategy(model="test/vision", client=sdk(handler))
+    rng = Random(7)
+    state, global_state = rng.getstate(), random.getstate()
+    description = strategy.describe()
+    for turn in range(3):
+        current = [image + turn for image in images]
+        decision = strategy.choose(current, rng=rng)
+        decisions.append(decision)
+        payload = requests[-1]
+        assert len(payload["messages"]) == 2
+        parts = payload["messages"][1]["content"]
+        assert parts[0]["text"] == "find something interesting"
+        assert parts[1]["text"] == "Current scratchpad:\n" + (notes[turn - 1] if turn else "")
+        assert [p["text"] for p in parts[2:] if p["type"] == "text"] == [f"Image {i}" for i in range(9)]
+        assert len(decode_images(payload)) == 9
+        for actual, expected in zip(decode_images(payload), current):
+            np.testing.assert_array_equal(actual, expected)
+        assert decision.scores is None and decision.evaluation is None
+        assert decision.mode == "vlm-scratchpad"
+        assert decision.metadata["inference"]["api_images_submitted"] == 9
+    assert rng.getstate() == state and random.getstate() == global_state
+    assert strategy.describe() == description  # Configuration never contains mutable memory.
+    assert description["selection_strategy"] == "vlm-scratchpad"
+    assert description["history_turns"] == 0
+    assert "Explore branches." not in json.dumps(requests[2])
+    assert decisions[0].metadata["vlm"]["scratchpad_before"] == ""
+    assert decisions[0].metadata["vlm"]["scratchpad"] == notes[0]
+    schema = requests[0]["response_format"]["json_schema"]
+    assert schema["strict"] and schema["schema"]["additionalProperties"] is False
+    assert set(schema["schema"]["required"]) == {"selected_index", "reason", "scratchpad"}
+    assert schema["schema"]["properties"]["scratchpad"]["type"] == "string"
+
+
+@pytest.mark.parametrize("bad_reply", [
+    response(), response(scratchpad=""), response(scratchpad="  "),
+    response(scratchpad=12), response(scratchpad=[]),
+    response(text='{"selected_index":1,"reason":"x","scratchpad":null}'),
+    response(text='{"selected_index":1,"reason":"x","scratchpad":"note","extra":1}'),
+    response(position=True, scratchpad="note"), response(position=9, scratchpad="note"),
+    response(text='{"selected_index":1,"reason":"","scratchpad":"note"}'),
+    response(finish="length", scratchpad="note"), response(text="not json"),
+])
+def test_invalid_scratchpad_response_preserves_previous_note(sdk, images, bad_reply):
+    requests = []
+    replies = iter([response(scratchpad="Keep this note."), bad_reply, response(scratchpad="New note.")])
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json=next(replies))
+    strategy = VLMScratchpadSelectionStrategy(model="test/vision", client=sdk(handler))
+    strategy.choose(images, rng=Random(0))
+    with pytest.raises(SelectionError) as error:
+        strategy.choose(images, rng=Random(0))
+    assert len(requests) == 2  # Invalid output is not retried.
+    assert error.value.metadata["vlm"]["scratchpad_before"] == "Keep this note."
+    result = strategy.choose(images, rng=Random(0))
+    assert requests[1] == requests[2]
+    assert result.metadata["vlm"]["scratchpad_before"] == "Keep this note."
+
+
+def test_scratchpad_transport_failure_and_retry_preserve_request(sdk, images):
+    requests = []
+    def handler(request):
+        requests.append(json.loads(request.content))
+        if len(requests) in (2, 3, 4):
+            return httpx.Response(503, json={"error": {"message": "test-secret", "code": 503}})
+        return httpx.Response(200, json=response(scratchpad="First note." if len(requests) == 1 else "Next note."))
+    strategy = VLMScratchpadSelectionStrategy(model="test/vision", client=sdk(handler), max_retries=1)
+    strategy.choose(images, rng=Random(0))
+    with pytest.raises(SelectionError) as error:
+        strategy.choose(images, rng=Random(0))
+    assert error.value.metadata["vlm"]["scratchpad_before"] == "First note."
+    decision = strategy.choose(images, rng=Random(0))
+    assert requests[1] == requests[2] == requests[3] == requests[4]
+    assert decision.metadata["vlm"]["scratchpad_before"] == "First note."
+    assert decision.metadata["inference"]["api_requests"] == 2
+    assert "test-secret" not in json.dumps(error.value.metadata)
+
+
+def test_scratchpad_batch_starts_each_run_empty(tmp_path, sdk):
+    notes_sent = []
+    def handler(request):
+        payload = json.loads(request.content)
+        notes_sent.append(payload["messages"][1]["content"][1]["text"])
+        return httpx.Response(200, json=response(scratchpad="Continue exploring."))
+    manifest = run_batch(
+        strategy_factory=lambda: VLMScratchpadSelectionStrategy(model="test/vision", client=sdk(handler)),
+        output_dir=tmp_path / "batch", runs=2,
+        settings=ExperimentSettings(steps=2, size=4), progress=None,
+    )
+    assert manifest["completed_runs"] == 2
+    assert notes_sent == ["Current scratchpad:\n", "Current scratchpad:\nContinue exploring."] * 2
+
+
+def test_scratchpad_cli_defaults_and_options(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-secret")
+    parser = build_parser()
+    args = parser.parse_args(["vlm-scratchpad", "--vlm-model", "test/vision"])
+    strategy = args.build_strategy(args)
+    assert isinstance(strategy, VLMScratchpadSelectionStrategy)
+    assert strategy.describe()["prompt"] == "find something interesting"
+    args = parser.parse_args(["vlm-scratchpad", "--vlm-model", "test/vision", "--vlm-prompt", "custom",
+                             "--temperature", ".5", "--max-completion-tokens", "2048", "--max-retries", "0"])
+    description = args.build_strategy(args).describe()
+    assert description["prompt"] == "custom" and description["temperature"] == .5
+    assert description["max_completion_tokens"] == 2048 and description["max_retries"] == 0
+    with pytest.raises(SystemExit):
+        parser.parse_args(["vlm-scratchpad", "--device", "cpu"])
