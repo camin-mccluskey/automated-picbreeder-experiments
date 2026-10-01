@@ -101,7 +101,7 @@ class VLMSelectionStrategy:
     """Choose directly from nine labelled PNGs in one stateless OpenRouter request."""
 
     def __init__(self, *, model=None, prompt="choose the most interesting image to you",
-                 temperature=0.0, max_completion_tokens=1024, timeout=120.0,
+                 temperature=None, max_completion_tokens=8192, timeout=120.0,
                  max_retries=5, env_file=None, client=None):
         from .vlm import OpenRouterSelection
 
@@ -133,7 +133,7 @@ class VLMScratchpadSelectionStrategy(VLMSelectionStrategy):
     """Choose from the current grid with one model-written, rewritable note."""
 
     def __init__(self, *, model=None, prompt="find something interesting",
-                 temperature=0.0, max_completion_tokens=1024, timeout=120.0,
+                 temperature=None, max_completion_tokens=8192, timeout=120.0,
                  max_retries=5, env_file=None, client=None):
         from .vlm import OpenRouterScratchpadSelection
 

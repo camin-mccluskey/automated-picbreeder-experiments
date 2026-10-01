@@ -162,8 +162,8 @@ Both `vlm` and `vlm-scratchpad` accept these options. Requires `uv run --extra v
 | --- | --- | --- |
 | `--vlm-model` | unset; required to run | `model`: nonempty explicit OpenRouter model ID supporting nine images and structured output |
 | `--vlm-prompt` | `vlm`: `choose the most interesting image to you`; `vlm-scratchpad`: `find something interesting` | `prompt`: nonempty text, saved exactly |
-| `--temperature` | `0.0` | `temperature`: finite in [0, 2]; no deterministic replay guarantee |
-| `--max-completion-tokens` | `1024` | `max_completion_tokens`: integer >= 1; total output budget, including reasoning where applicable |
+| `--temperature` | omitted | `temperature=None`: omit the request parameter and use the provider default; explicit values must be finite in [0, 2] and supported by the provider; no deterministic replay guarantee |
+| `--max-completion-tokens` | `8192` | `max_completion_tokens`: integer >= 1; total output ceiling, including reasoning where applicable, not a fixed token spend |
 | `--timeout` | `120.0` | `timeout`: finite positive seconds per SDK attempt |
 | `--max-retries` | `5` | `max_retries`: integer >= 0; extra attempts for transient errors only; pacing, jitter and server-directed waits are automatic |
 | `--env-file` | repository `.env` | `env_file=None`: default path; explicit path accepted; environment variable takes precedence |

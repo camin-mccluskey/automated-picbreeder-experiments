@@ -36,6 +36,10 @@ Restart notebook kernels after imported modules change.
 Neither VLM strategy consumes the selection RNG or sends an API seed. Remote
 choices are not guaranteed reproducible, even at temperature zero; exact model,
 prompt, settings and returned choices are recorded.
+Both default to omitting `--temperature` (Python `temperature=None`), leaving it
+to the provider, and `--max-completion-tokens 8192`, shared by reasoning and the
+final answer. Explicit temperatures require provider support. See the shared
+[OpenRouter options](strategies/options.md#openrouter-vlm).
 [VLM with a scratchpad](strategies/vlm-scratchpad.md) additionally records the
 note supplied and its replacement per decision. Only the latest note is sent
 with the current images; each fresh batch run starts with an empty note.

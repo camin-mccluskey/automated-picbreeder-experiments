@@ -47,14 +47,19 @@ apply. The `--vlm-prompt` default is `find something interesting`. There are no
 scratchpad-specific options or local device, classifier, observer or predictor
 options.
 
+Temperature is omitted by default (`temperature=None`), using the provider's
+default; explicit values require provider support. The default 8,192-token
+completion ceiling covers reasoning, the choice, reason and replacement note
+together. It is not a fixed token spend and does not guarantee a complete response.
+
 Constructor defaults (supply `model` to construct a usable strategy):
 
 ```python
 VLMScratchpadSelectionStrategy(
     model=None,
     prompt="find something interesting",
-    temperature=0.0,
-    max_completion_tokens=1024,
+    temperature=None,
+    max_completion_tokens=8192,
     timeout=120.0,
     max_retries=5,
     env_file=None,

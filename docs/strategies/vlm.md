@@ -51,14 +51,19 @@ inputs and JSON Schema output; this is an example, not a required model.
 [All run options](../run-options.md) and [OpenRouter options](options.md#openrouter-vlm)
 apply. No local device, cache, classifier, observer or predictor options apply.
 
+Temperature is omitted by default (`temperature=None`), using the provider's
+default. Set `--temperature` only for providers that support it. The default
+8,192-token completion ceiling covers reasoning and the final JSON together;
+it is not a fixed token spend and does not guarantee a complete response.
+
 Constructor defaults (supply `model` to construct a usable strategy):
 
 ```python
 VLMSelectionStrategy(
     model=None,
     prompt="choose the most interesting image to you",
-    temperature=0.0,
-    max_completion_tokens=1024,
+    temperature=None,
+    max_completion_tokens=8192,
     timeout=120.0,
     max_retries=5,
     env_file=None,

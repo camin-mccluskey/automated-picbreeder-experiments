@@ -144,6 +144,8 @@ class OpenRouterSelection:
         for name, value, minimum, maximum in (
             ("temperature", temperature, 0, 2), ("timeout", timeout, 0, math.inf),
         ):
+            if name == "temperature" and value is None:
+                continue
             if (isinstance(value, bool) or not isinstance(value, Real)
                     or not math.isfinite(value) or not minimum <= value <= maximum
                     or (name == "timeout" and value <= 0)):
@@ -153,7 +155,8 @@ class OpenRouterSelection:
             if type(value) is not int or value < minimum:
                 raise ValueError(f"{name} must be an integer >= {minimum}.")
         self.model, self.prompt = model, prompt
-        self.temperature, self.timeout = float(temperature), float(timeout)
+        self.temperature = None if temperature is None else float(temperature)
+        self.timeout = float(timeout)
         self.max_completion_tokens, self.max_retries = max_completion_tokens, max_retries
         self._next_request_at = 0.0
         self.client = client
@@ -213,10 +216,12 @@ class OpenRouterSelection:
             model=self.model,
             messages=[{"role": "system", "content": self.protocol}, {"role": "user", "content": content}],
             response_format=deepcopy(self.response_format), provider={"require_parameters": True},
-            temperature=self.temperature, max_completion_tokens=self.max_completion_tokens,
+            max_completion_tokens=self.max_completion_tokens,
             stream=False, retries=None, timeout_ms=max(1, int(self.timeout * 1000)),
             x_open_router_metadata="enabled",
         )
+        if self.temperature is not None:
+            request["temperature"] = self.temperature
         audit = {"configuration": self.describe(), "image_sha256": hashes, "attempts": []}
         if self.uses_scratchpad:
             audit["scratchpad_before"] = scratchpad

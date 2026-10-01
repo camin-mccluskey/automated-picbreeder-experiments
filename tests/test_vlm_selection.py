@@ -117,6 +117,30 @@ def test_sdk_request_has_nine_original_images_strict_schema_and_no_history(sdk, 
     assert "test-secret" not in json.dumps(decision.metadata)
 
 
+@pytest.mark.parametrize("strategy_type", [VLMSelectionStrategy, VLMScratchpadSelectionStrategy])
+@pytest.mark.parametrize("options", [{}, {"temperature": None}, {"temperature": 0},
+                                     {"temperature": .7, "max_completion_tokens": 512}])
+def test_sdk_optional_temperature_and_completion_budget(sdk, images, strategy_type, options):
+    requests = []
+    def handler(request):
+        requests.append(json.loads(request.content))
+        note = "Continue exploring." if strategy_type is VLMScratchpadSelectionStrategy else None
+        return httpx.Response(200, json=response(scratchpad=note))
+    strategy = strategy_type(model="test/vision", client=sdk(handler), **options)
+    decision = strategy.choose(images, rng=Random(7))
+    payload = requests[0]
+    temperature = options.get("temperature")
+    if temperature is None:
+        assert "temperature" not in payload
+    else:
+        assert payload["temperature"] == temperature
+    budget = options.get("max_completion_tokens", 8192)
+    assert payload["max_completion_tokens"] == budget
+    configuration = decision.metadata["vlm"]["configuration"]
+    assert configuration["temperature"] == temperature
+    assert configuration["max_completion_tokens"] == budget
+
+
 @pytest.mark.parametrize("text", [
     '{"selected_index":9,"reason":"x"}', '{"selected_index":-1,"reason":"x"}',
     '{"selected_index":true,"reason":"x"}', '{"selected_index":1.0,"reason":"x"}',
@@ -388,6 +412,15 @@ def test_invalid_grid_before_request(images, strategy_type):
     for invalid in (images[:8], [image[:, :, 0] for image in images]):
         with pytest.raises(ValueError):
             strategy.choose(invalid, rng=Random(0))
+
+
+@pytest.mark.parametrize("command", ["vlm", "vlm-scratchpad"])
+def test_cli_vlm_generation_defaults(command, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-secret")
+    args = build_parser().parse_args([command, "--vlm-model", "test/vision"])
+    description = args.build_strategy(args).describe()
+    assert description["temperature"] is None
+    assert description["max_completion_tokens"] == 8192
 
 
 def test_cli_forwards_vlm_options_without_classifier_options(tmp_path, monkeypatch):
