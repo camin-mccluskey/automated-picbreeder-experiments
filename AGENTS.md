@@ -90,7 +90,7 @@ Paths below are relative to the repository root. Core modules live in `src/autom
 | `experiment_metrics.py` | Saved-session diagnostics, image references, per-generation CSV/JSON and equal-run summaries |
 | `session_history.py` | Chronological display visits/selection events and actual final genome ancestry |
 | `posthoc_evaluation.py` | Optional frozen ImageNet evaluation of saved images, separate from selection records and costs |
-| `experiment_viewer.py`, `viewer/` | Offline HTML export, relative image links and interactive charts/galleries |
+| `experiment_viewer.py`, `viewer_cache.py`, `viewer/` | Offline HTML export, relative image links and interactive charts/galleries |
 | `experiment_reporting.py` | Contact sheets and progress, using recorded decisions and optional scores |
 | `persistence.py` | `SessionWriter`: common assembly and saving of run data for both interfaces |
 | `selection_cli.py` | Shared CLI option groups, strategy subcommands and builders; add a configure function and register it in `COMMANDS` |
@@ -144,8 +144,13 @@ runtime. Optional `evaluate_session_imagenet` writes post-run measurements and
 costs separately; it never relabels human choices as classifier decisions.
 Every metrics export also generates `index.html`; batches maintain an overview.
 `experiments/view_results.py runs/` builds an offline collection viewer without
-inference or source-record changes. JavaScript and data are embedded, images use
-relative paths, and no server/CDN is required. Keep missing values as gaps, report
+inference or source-record changes. Each page embeds JavaScript and data, images use
+relative paths, and no server/CDN is required. Collection overviews link to
+companion per-run HTML pages. Viewer diagnostics and image inventories are cached
+in `.viewer-cache/` with source/image stat and metric-code fingerprints; original
+records stay unchanged. `--refresh` forces extraction and `--jobs` bounds independent
+run workers (up to four by default). Save paths pass existing reports/aggregates
+to rendering. Keep missing values as gaps, report
 failure status, and preserve chronological clicks, display visits and actual
 ancestry as separate views. The viewer is read-only; it cannot influence breeding.
 

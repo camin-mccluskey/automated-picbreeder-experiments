@@ -57,7 +57,9 @@ uv run viewer
 ```
 
 Pass a run or batch path to view only those results: `uv run viewer runs/my-run`.
-Use `--no-open` to build the HTML without opening a browser.
+Use `--no-open` to build without opening a browser. Unchanged diagnostics are
+cached; `--refresh` forces recomputation and `--jobs N` limits parallel workers
+(default: up to four). Collection overviews link to companion per-run pages.
 
 [Batch experiments and metrics](docs/batch-experiments.md) explains diagnostics,
 failures, human-session comparisons and sharing reports with their image folders.

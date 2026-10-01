@@ -127,10 +127,44 @@ uv run viewer runs/novelty-batch runs/cppn-SAVED-TIMESTAMP --output runs/compari
 
 With no `--output`, the file is `index.html` inside the first source directory.
 Discovery recognizes batch boundaries so batch runs are not listed twice.
-Explicit generation rebuilds diagnostics in memory from the saved session without
-rewriting the original session, metrics or batch aggregates. Failed, pending,
-interrupted and unreadable entries remain visible with their status or error.
-The automatic save path reuses the metrics it just produced.
+The viewer reuses diagnostics in `.viewer-cache/records.json` inside each run.
+This disposable cache contains a lightweight image inventory and the extracted
+report. It checks file size and nanosecond modification/change times for the
+session, performance records, optional post-run evaluation and every image, plus
+a fingerprint of the metric implementation. Changed inputs, missing caches and
+older runs without a cache trigger extraction. Original `session.json`,
+`metrics.json`, `metrics.csv` and `aggregate.json` are never rewritten by the
+viewer. Editing `metrics.json` does not change the viewer: diagnostics derive
+from the session, PNGs, performance and post-run evaluation records.
+
+```sh
+# Force extraction even when inputs are unchanged.
+uv run viewer runs/novelty-batch --refresh --no-open
+
+# Limit independent run workers (default: up to four available CPUs).
+uv run viewer runs/novelty-batch --jobs 2
+# Use --jobs 1 for serial work, including calls from notebooks/scripts.
+```
+
+Python: `write_viewer(path, refresh=False, jobs=None)` uses the same defaults;
+`jobs` must be a positive integer. Parallel Python calls belong under an
+`if __name__ == "__main__":` guard in scripts. Workers read independent runs;
+selection, model inference and training are never invoked. Cache checks use file
+metadata rather than rehashing every PNG. `--refresh` also provides an explicit
+rebuild when needed. Cache directories can be removed and regenerated.
+
+A single run writes one inspector. A batch or collection writes a smaller
+`index.html` overview and an `index-runs/` directory of per-run HTML pages
+(or `<output-stem>-runs/` for a custom output). The overview embeds scalar chart
+series and final-image links; candidate details, histories and image inventories
+load only when you follow a run link. All pages still open directly from disk.
+Copy the companion pages and referenced image folders with the overview when
+sharing it. Unchanged pages are not rewritten.
+
+Failed, pending, interrupted and unreadable entries remain visible with their
+status or error. The automatic save path passes its existing reports and batch
+aggregate directly to rendering. Explicit builds also cache unchanged batch
+aggregates in `.viewer-cache/aggregate.json`.
 
 The collection overview shows every run's final saved image, a strategy filter,
 a run ledger and batch trajectory plots. Batch plots offer a scalar metric

@@ -5,6 +5,7 @@ based, matching grids and strategy records. None means unavailable, never zero.
 """
 
 import csv
+from functools import lru_cache
 import json
 from pathlib import Path
 
@@ -205,15 +206,13 @@ def _forecast_summary(rows):
     return result
 
 
-def _load_images(directory, records, ids):
-    images = []
-    for key in ids:
-        with Image.open(directory / records[key]["image"]) as image:
-            images.append(np.asarray(image.convert("RGB")))
-    return images
+def image_inventory(data):
+    """Small viewer records; no network parameters or classifier matrices."""
+    return [{"genome_id": g["key"], "parent_id": g["parent"], "path": g["image"]}
+            for g in data["genomes"]]
 
 
-def build_run_metrics(directory, *, status=None):
+def build_run_metrics(directory, *, status=None, data=None):
     """Read saved records and PNGs; never load strategy models or perform inference.
 
     Rows follow explicit selection events, including human reselections. Display
@@ -222,7 +221,8 @@ def build_run_metrics(directory, *, status=None):
     deduplicate exact earlier images without changing the minimum distance.
     """
     directory = Path(directory)
-    data = json.loads((directory / "session.json").read_text())
+    if data is None:
+        data = json.loads((directory / "session.json").read_text())
     config = data["metadata"]["selection_strategy"]
     human = config["selection_strategy"] == "human"
     if not human and (any(e["action"] == "back" for e in data["events"]) or sum(e["action"] == "reset" for e in data["events"]) != 1):
@@ -230,6 +230,16 @@ def build_run_metrics(directory, *, status=None):
     selections, displays, ancestry = session_history(data)
     ancestry_ids = {node["genome_id"] for node in ancestry}
     records = {genome["key"]: genome for genome in data["genomes"]}
+
+    @lru_cache(maxsize=32)
+    def load_image(key):
+        with Image.open(directory / records[key]["image"]) as image:
+            return np.asarray(image.convert("RGB"))
+
+    @lru_cache(maxsize=2)
+    def display_mean(index):
+        return np.asarray([load_image(key) for key in displays[index]["displayed"]], dtype=float).mean(axis=0)/255
+
     performance_path = directory / "performance.json"
     performance = json.loads(performance_path.read_text()) if performance_path.exists() else {}
     timings = {entry["generation"]: entry for entry in performance.get("generations", [])}
@@ -239,24 +249,23 @@ def build_run_metrics(directory, *, status=None):
     rows, history, seen, feedbacks = [], [], set(), []
     previous = previous_id = previous_class = None
     previous_posthoc_class = None
-    reference_index, reference_mean = None, None
     streak = explored = 0
     for generation, context in enumerate(selections):
         event = context["event"]
         ids, position = event["displayed"], event["position"]
         if not human and (len(ids) != 9 or (generation and (ids[0] != previous_id or any(records[k]["parent"] != previous_id for k in ids[1:])))):
             raise ValueError("Expected nine chronological candidates with the selected parent retained first.")
-        images = _load_images(directory, records, ids)
+        images = [load_image(key) for key in ids]
         selected = images[position]
+        identity = selected.tobytes()
         unchanged = None if previous is None else bool(np.array_equal(selected, previous))
         streak = streak + 1 if unchanged else 1
         distance = nearest = None
         if previous is not None:
             pixels = selected.astype(float) / 255
             distance = float(np.mean((pixels - previous.astype(float) / 255)**2))
-            nearest = min(float(np.mean((pixels - np.asarray(history[i:i+32], dtype=float)/255)**2,
+            nearest = 0.0 if identity in seen else min(float(np.mean((pixels - np.asarray(history[i:i+32], dtype=float)/255)**2,
                                         axis=(1, 2, 3)).min()) for i in range(0, len(history), 32))
-        identity = selected.tobytes()
         if identity not in seen:
             history.append(selected)
             seen.add(identity)
@@ -278,10 +287,9 @@ def build_run_metrics(directory, *, status=None):
         candidates = [{"position": i, "genome_id": key, "image": records[key]["image"],
                        "score": None if scores is None else scores[i]} for i, key in enumerate(ids)]
         display_index = context["display_index"]
-        if display_index and reference_index != display_index - 1:
-            reference_index = display_index - 1
-            reference_mean = np.asarray(_load_images(directory, records, displays[reference_index]["displayed"]), dtype=float).mean(axis=0)/255
+        reference_mean = display_mean(display_index - 1) if display_index else None
         display_novelty = np.mean((np.asarray(images, dtype=float)/255 - reference_mean)**2, axis=(1, 2, 3)) if display_index else None
+        display_mean(display_index)  # Keep this visit's mean for the next selection.
         _grid_stats(metrics, "display_novelty", display_novelty, position)
         for i, candidate in enumerate(candidates):
             candidate["display_novelty"] = float(display_novelty[i]) if display_novelty is not None else None
@@ -340,7 +348,7 @@ def build_run_metrics(directory, *, status=None):
                 posthoc_evaluation={key: value for key, value in posthoc.items() if key not in {"values", "genome_ids", "names"}} if posthoc else None,
                 final_selected_id=data["selected"],
                 final_image=records[data["selected"]]["image"] if data["selected"] is not None else None,
-                generations=rows, summary=summary)
+                generations=rows, summary=summary, image_inventory=image_inventory(data))
 
 
 def save_run_metrics(directory, *, status=None):
@@ -372,9 +380,11 @@ def save_run_metrics(directory, *, status=None):
          "posthoc_class_index": (row["posthoc_selected_class"] or {}).get("index"),
          "posthoc_class_name": (row["posthoc_selected_class"] or {}).get("name"), **row["metrics"]}
         for row in report["generations"]])
+    from .viewer_cache import cache_report
     from .experiment_viewer import write_viewer
 
-    write_viewer(directory, refresh=False)
+    cache_report(directory, report)
+    write_viewer(directory, prepared_reports={directory.resolve(): report})
     return report
 
 

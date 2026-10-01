@@ -46,7 +46,10 @@ def _save_batch(directory, manifest, reports):
     write_csv(directory / "runs.csv", rows)
     from .experiment_viewer import write_viewer
 
-    write_viewer(directory, refresh=False)
+    by_seed = {report["seed"]: report for report in reports}
+    prepared = {directory / entry["directory"]: by_seed[entry["seed"]]
+                for entry in manifest["runs"] if entry["seed"] in by_seed}
+    write_viewer(directory, prepared_reports=prepared, prepared_aggregates={directory: aggregate})
 
 
 def run_batch(*, strategy_factory, output_dir, runs, settings=ExperimentSettings(), progress=print):

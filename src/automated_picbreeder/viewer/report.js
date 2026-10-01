@@ -42,7 +42,8 @@
   }
   document.getElementById('close-dialog').onclick = () => dialog.close();
   dialog.onclick = event => {if (event.target === dialog) dialog.close();};
-  document.getElementById('home').onclick = event => {event.preventDefault(); overview();};
+  const goOverview = () => {if(data.overview) location.href=data.overview; else overview();};
+  document.getElementById('home').onclick = event => {event.preventDefault(); goOverview();};
   function statBar(items) {
     const bar = node('div', null, 'stats');
     items.forEach(([name, value]) => {const part = node('div', null, 'stat'); part.append(node('strong', fmt(value)), node('span', name)); bar.append(part);});
@@ -127,7 +128,7 @@
         const card=button('',()=>openRun(run.id),'run-card'), wrap=node('div',null,'image-wrap');
         wrap.append(image(run,run.report?.final_image,`Final image, ${strategy(run)}, seed ${run.seed}`));
         wrap.append(node('span',run.status,`badge ${run.status}`)); card.append(wrap,node('h3',`${strategy(run)} · seed ${fmt(run.seed)}`),node('p',run.label));
-        if(run.report) card.append(node('p',`${run.report.summary.decisions} selections · ${run.images.length} generated`));
+        if(run.report) card.append(node('p',`${run.report.summary.decisions} selections · ${run.image_count ?? run.images.length} generated`));
         gallery.append(card);
       });
       if(!gallery.children.length) gallery.append(node('p','No runs in this collection.','empty'));
@@ -152,7 +153,7 @@
         const hint=node('p','Median and middle 50% of completed runs. Hover a run to identify it; click to inspect.','chart-note');
         const series=[];
         if(show.checked) selectedGroup.run_ids.map(id=>data.runs[id]).filter(r=>r.status==='complete'&&r.report).forEach((r,i)=>series.push({
-          name:`Seed ${r.seed} · ${r.label}`,values:r.report.generations.map(row=>row.metrics[key]),color:colors[i%colors.length],faint:true,
+          name:`Seed ${r.seed} · ${r.label}`,values:r.series ? (r.series[key] || []) : r.report.generations.map(row=>row.metrics[key]),color:colors[i%colors.length],faint:true,
           onClick:index=>openRun(r.id,index),onHover:()=>hint.textContent=`Seed ${r.seed} · ${r.label} — click its line to inspect.`}));
         series.push({name:'Median',values:agg.map(g=>g.metrics[key]?.median),color:'#263f30'});
         const plot=basePlot(series,agg.length,{overview:true,band:agg.map(g=>({min:g.metrics[key]?.q25,max:g.metrics[key]?.q75}))});
@@ -163,7 +164,7 @@
     app.append(node('h2','Run ledger'));
     app.append(table(['Run','Status','Selections','Presentations','Genomes','Run seconds','Human seconds'],data.runs.map(run=>[
       button(`${strategy(run)} / ${fmt(run.seed)}`,()=>openRun(run.id)),run.status,run.report?.summary.decisions,
-      run.report?.summary.candidate_presentations,run.images.length,run.report?.summary.run_seconds,run.report?.summary.interaction_seconds])));
+      run.report?.summary.candidate_presentations,run.image_count ?? run.images.length,run.report?.summary.run_seconds,run.report?.summary.interaction_seconds])));
     app.append(node('p','Pixel change and classifier confidence are diagnostics, not ratings of interestingness. Human interaction time includes deliberation and idle time. Compare configurations and exploration budgets before interpreting differences.','footnote'));
   }
   const groups = [
@@ -190,11 +191,16 @@
     state.charts.push({plot,values,lines,card});return card;
   }
   function openRun(id, index) {
-    const run=data.runs[id];if(!run)return;state.run=run;state.charts=[];state.gallery='timeline';state.page=0;
+    const run=data.runs[id];if(!run)return;
+    if(run.viewer_url){location.href=run.viewer_url+(Number.isInteger(index)?`#run=0&generation=${index}`:'');return;}
+    state.run=run;state.charts=[];state.gallery='timeline';state.page=0;
     state.index=Math.max(0,Math.min(Number.isInteger(index)?index:Math.max(0,(run.report?.generations.length||1)-1),(run.report?.generations.length||1)-1));
-    app.replaceChildren(); app.append(button('← All runs',overview,'back'));
+    app.replaceChildren(); app.append(button('← All runs',goOverview,'back'));
     const heading=titleBlock(`${strategy(run)} / ${fmt(run.seed)}`,run.label,'RUN INSPECTOR');
-    const switcher=selectControl(data.runs.map(r=>[String(r.id),`${strategy(r)} · seed ${fmt(r.seed)} · ${r.label}`]),String(id),value=>openRun(Number(value)),'Choose run');heading.append(switcher);app.append(heading);
+    const switcher=data.navigation
+      ? selectControl(data.navigation.map((r,i)=>[String(i),`${r.strategy} · seed ${fmt(r.seed)} · ${r.label}`]),String(data.current_run),value=>{location.href=data.navigation[Number(value)].url;},'Choose run')
+      : selectControl(data.runs.map(r=>[String(r.id),`${strategy(r)} · seed ${fmt(r.seed)} · ${r.label}`]),String(id),value=>openRun(Number(value)),'Choose run');
+    heading.append(switcher);app.append(heading);
     if(run.error)app.append(node('p',run.error,'note error'));
     if(!run.report){
       app.append(node('p',`This run is ${run.status}. Metric records are unavailable.`,'empty'));
@@ -316,5 +322,5 @@
   });
   const initial=new URLSearchParams(location.hash.slice(1));
   if(initial.has('run')&&data.runs[Number(initial.get('run'))])openRun(Number(initial.get('run')),Number(initial.get('generation')||0));
-  else if(data.runs.length===1)openRun(0);else overview();
+  else if(data.runs.length===1&&!data.is_overview)openRun(0);else overview();
 })();

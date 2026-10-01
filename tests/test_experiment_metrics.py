@@ -219,3 +219,18 @@ def test_learning_metrics_keep_preupdate_errors_and_align_delayed_targets(tmp_pa
         errors = [r["metrics"]["offspring_error"] for r in rows if r["metrics"]["offspring_error"] is not None]
         assert report["summary"]["offspring_prediction"]["all"]["rmse"] == pytest.approx(np.sqrt(np.mean(np.square(errors))))
     assert build_run_metrics(directory) == report
+
+
+def test_rebuild_decodes_each_automated_image_once(tmp_path, monkeypatch):
+    directory = tmp_path / 'run'
+    run(directory, RandomSelectionStrategy())
+    original = Image.open
+    opened = []
+
+    def record(path, *args, **kwargs):
+        opened.append(str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Image, 'open', record)
+    build_run_metrics(directory)
+    assert len(opened) == len(set(opened)) == 25

@@ -4,6 +4,8 @@ import base64
 from io import BytesIO
 import json
 from random import Random
+import re
+from urllib.parse import unquote
 
 import numpy as np
 from PIL import Image
@@ -233,7 +235,14 @@ def test_batch_aggregates_completed_api_costs_and_retains_failed_requests(tmp_pa
         assert report["summary"]["metrics"]["api_requests"]["total"] == 1
     failed = next(entry for entry in manifest["runs"] if entry["status"] == "failed")
     assert (output / failed["directory"] / "selection_failure.json").exists()
-    assert "selection_failure.json" in write_viewer(output).read_text()
+    def payload(path):
+        return json.loads(re.search(r'<script id="report-data" type="application/json">(.*?)</script>', path.read_text(), re.S)[1])
+
+    overview = write_viewer(output)
+    failed_view = next(run for run in payload(overview)["runs"] if run["status"] == "failed")
+    page = overview.parent / unquote(failed_view["viewer_url"])
+    link = payload(page)["runs"][0]["files"]["selection_failure.json"]
+    assert (page.parent / unquote(link)).resolve() == (output / failed["directory"] / "selection_failure.json").resolve()
 
 
 def test_missing_usage_remains_null_in_metrics_and_run_totals(tmp_path, sdk):
