@@ -165,7 +165,7 @@ Only `vlm` accepts these options. Requires `uv run --extra vlm` and
 | `--temperature` | `0.0` | `temperature`: finite in [0, 2]; no deterministic replay guarantee |
 | `--max-completion-tokens` | `1024` | `max_completion_tokens`: integer >= 1; total output budget, including reasoning where applicable |
 | `--timeout` | `120.0` | `timeout`: finite positive seconds per SDK attempt |
-| `--max-retries` | `2` | `max_retries`: integer >= 0; extra attempts for transient errors only |
+| `--max-retries` | `5` | `max_retries`: integer >= 0; extra attempts for transient errors only; pacing, jitter and server-directed waits are automatic |
 | `--env-file` | repository `.env` | `env_file=None`: default path; explicit path accepted; environment variable takes precedence |
 
 Python-only `client=None` allows injecting an SDK client; the caller owns its

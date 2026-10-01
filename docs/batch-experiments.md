@@ -345,7 +345,7 @@ the offline viewer. These are reported preferences, not measured interestingness
 | `api_images_submitted` | Nine images per attempted request, including duplicates and retained parent |
 | `api_prompt_tokens`, `api_completion_tokens` | Sum of reported usage over all attempts, or null if any attempt lacks usage |
 | `api_cost_usd` | Sum of reported USD cost over all attempts, or null if any attempt lacks cost |
-| `api_seconds` | Host wall time for the API operation including retry waits, nested inside selection time |
+| `api_seconds` | Host wall time for the API operation including retry and request-pacing waits, nested inside selection time |
 
 All API metrics have per-run totals; totals remain null if any constituent value
 is unknown. Completed runs contribute equally to batch aggregates. Counts refer

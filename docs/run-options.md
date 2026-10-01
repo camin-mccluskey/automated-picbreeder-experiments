@@ -48,7 +48,10 @@ VLM selection produces no numeric evaluation rows: `evaluated_images` is zero.
 Its separate `api_requests` and `api_images_submitted` counters include retries;
 without retries, S decisions make S requests containing 9*S images. API usage,
 reported USD costs and elapsed time are saved separately; unknown values stay
-null. See [VLM selection](strategies/vlm.md) for failure accounting.
+null. VLM calls are automatically paced with jitter and honor server retry waits;
+elapsed API time includes these waits. The existing `--max-retries` option
+defaults to five extra attempts. See [VLM selection](strategies/vlm.md) for
+retry timing, its per-strategy scope and failure accounting.
 
 A 100-decision run therefore presents 900 candidates and generates 801 genomes.
 Saved checkpoints are audit records, not resumable sessions. All generated images,

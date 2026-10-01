@@ -1,10 +1,14 @@
 """Exercise the actual OpenRouter SDK over a mocked HTTP transport; no paid calls."""
 
 import base64
+from datetime import datetime, timezone
+from email.utils import format_datetime
 from io import BytesIO
 import json
 from random import Random
+import random
 import re
+from types import SimpleNamespace
 from urllib.parse import unquote
 
 import numpy as np
@@ -23,6 +27,7 @@ from automated_picbreeder.experiment_viewer import write_viewer
 from automated_picbreeder.selection_cli import build_parser
 from automated_picbreeder.selection_strategies import SelectionError, VLMSelectionStrategy
 from automated_picbreeder.vlm import PROTOCOL
+from automated_picbreeder import vlm
 
 
 def response(position=4, *, text=None, finish="stop", usage=True):
@@ -43,12 +48,24 @@ def images():
     return [np.full((8, 8, 3), i * 20, dtype=np.uint8) for i in range(9)]
 
 
+@pytest.fixture(autouse=True)
+def clock(monkeypatch):
+    clock = SimpleNamespace(now=0.0, sleeps=[])
+    def sleep(seconds):
+        clock.sleeps.append(seconds)
+        clock.now += seconds
+    monkeypatch.setattr(vlm, "time", SimpleNamespace(
+        monotonic=lambda: clock.now, perf_counter=lambda: clock.now,
+        time=lambda: 1_800_000_000 + clock.now, sleep=sleep))
+    return clock
+
+
 @pytest.fixture
 def sdk():
     clients = []
-    def factory(handler):
+    def factory(handler, **kwargs):
         http = httpx.Client(transport=httpx.MockTransport(handler))
-        client = OpenRouter(api_key="test-secret", client=http)
+        client = OpenRouter(api_key="test-secret", client=http, **kwargs)
         clients.append(http)
         return client
     yield factory
@@ -123,9 +140,8 @@ def test_incomplete_or_refused_completion_is_not_selected(sdk, images, finish):
 
 
 @pytest.mark.parametrize("failure", [429, 503, "timeout"])
-def test_transient_retry_is_counted_and_uses_identical_request(sdk, images, monkeypatch, failure):
+def test_transient_retry_is_counted_and_uses_identical_request(sdk, images, failure):
     requests = []
-    monkeypatch.setattr("automated_picbreeder.vlm.time.sleep", lambda seconds: None)
     def handler(request):
         requests.append(request.content)
         if len(requests) == 1:
@@ -141,10 +157,9 @@ def test_transient_retry_is_counted_and_uses_identical_request(sdk, images, monk
     assert "test-secret" not in json.dumps(decision.metadata)
 
 
-@pytest.mark.parametrize("status,expected", [(401, 1), (400, 1), (402, 1), (429, 3), (503, 3)])
-def test_retry_limit_and_nontransient_failures(sdk, images, monkeypatch, status, expected):
+@pytest.mark.parametrize("status,expected", [(401, 1), (400, 1), (402, 1), (429, 6), (503, 6)])
+def test_retry_limit_and_nontransient_failures(sdk, images, status, expected):
     requests = []
-    monkeypatch.setattr("automated_picbreeder.vlm.time.sleep", lambda seconds: None)
     def handler(request):
         requests.append(request)
         return httpx.Response(status, json={"error": {"message": "test-secret", "code": status}})
@@ -152,6 +167,86 @@ def test_retry_limit_and_nontransient_failures(sdk, images, monkeypatch, status,
         VLMSelectionStrategy(model="test/vision", client=sdk(handler)).choose(images, rng=Random(0))
     assert len(requests) == expected
     assert "test-secret" not in str(error.value) + json.dumps(error.value.metadata)
+
+
+@pytest.mark.parametrize("headers,minimum", [
+    ({"Retry-After": "120"}, 120),
+    ({"Retry-After": "1.5"}, 1.5),
+    ({"Retry-After": format_datetime(datetime.fromtimestamp(1_800_000_120, timezone.utc), usegmt=True)}, 120),
+    ({"retry-after-ms": "2500", "Retry-After": "120"}, 2.5),
+    ({"retry-after-ms": "bad", "Retry-After": "120"}, 120),
+])
+@pytest.mark.parametrize("status", [429, 503])
+def test_server_retry_wait_is_respected_and_audited(sdk, images, clock, monkeypatch, headers, minimum, status):
+    monkeypatch.setattr(vlm, "_MIN_REQUEST_INTERVAL", 0)
+    starts = []
+    def handler(request):
+        starts.append(clock.now)
+        if len(starts) == 1:
+            return httpx.Response(status, headers={**headers, "x-secret": "test-secret"},
+                                  json={"error": {"message": "test-secret", "code": status}})
+        return httpx.Response(200, json=response())
+    strategy = VLMSelectionStrategy(model="test/vision", client=sdk(handler))
+    result = strategy.choose(images, rng=Random(0))
+    assert minimum <= starts[1] - starts[0] <= max(2, minimum + 1)
+    attempts = result.metadata["vlm"]["attempts"]
+    assert attempts[0]["retry_after_seconds"] == minimum
+    assert attempts[0]["retry_delay_seconds"] == attempts[1]["wait_seconds"] == starts[1]
+    assert result.metadata["inference"]["api_seconds"] == starts[1]
+    assert "test-secret" not in json.dumps(result.metadata)
+
+
+@pytest.mark.parametrize("header", [None, "bad", "-1", "NaN", "Infinity", "1e999"])
+def test_missing_or_invalid_retry_after_uses_bounded_exponential_jitter(sdk, images, clock, monkeypatch, header):
+    monkeypatch.setattr(vlm, "_MIN_REQUEST_INTERVAL", 0)
+    monkeypatch.setattr(vlm, "_REQUEST_JITTER", 0)
+    starts = []
+    def handler(request):
+        starts.append(clock.now)
+        return httpx.Response(429, headers={} if header is None else {"Retry-After": header},
+                              json={"error": {"message": "limited", "code": 429}})
+    with pytest.raises(SelectionError) as error:
+        VLMSelectionStrategy(model="test/vision", client=sdk(handler), max_retries=7).choose(images, rng=Random(0))
+    assert len(starts) == 8 and len(clock.sleeps) == 7
+    for actual, ceiling in zip(clock.sleeps, [2, 4, 8, 16, 32, 60, 60]):
+        assert ceiling / 2 <= actual <= ceiling
+    assert error.value.metadata["inference"]["api_requests"] == 8
+    assert "retry_delay_seconds" not in error.value.metadata["vlm"]["attempts"][-1]
+
+
+def test_successful_calls_are_paced_with_jitter_without_advancing_rngs(sdk, images, clock):
+    starts = []
+    def handler(request):
+        starts.append(clock.now)
+        return httpx.Response(200, json=response())
+    strategy = VLMSelectionStrategy(model="test/vision", client=sdk(handler))
+    rng = Random(17)
+    selection_state, global_state = rng.getstate(), random.getstate()
+    strategy.choose(images, rng=rng)
+    clock.now += 1  # Local rendering counts toward the next start interval.
+    strategy.choose(images, rng=rng)
+    assert 3 <= starts[1] - starts[0] <= 4
+    assert 2 <= clock.sleeps[0] <= 3
+    clock.now += 10  # No extra sleep when the request interval has already elapsed.
+    result = strategy.choose(images, rng=rng)
+    assert len(clock.sleeps) == 1
+    assert result.metadata["vlm"]["attempts"][0]["wait_seconds"] == 0
+    assert rng.getstate() == selection_state and random.getstate() == global_state
+
+
+def test_adapter_disables_injected_sdk_retries_and_zero_retries_never_sleeps(sdk, images, clock):
+    from openrouter.utils import BackoffStrategy, RetryConfig
+    starts = []
+    def handler(request):
+        starts.append(clock.now)
+        return httpx.Response(503, headers={"Retry-After": "120"},
+                              json={"error": {"message": "limited", "code": 503}})
+    client = sdk(handler, retry_config=RetryConfig("backoff", BackoffStrategy(1, 1, 2, 10), True))
+    with pytest.raises(SelectionError) as error:
+        VLMSelectionStrategy(model="test/vision", client=client, max_retries=0).choose(images, rng=Random(0))
+    assert len(starts) == 1 and clock.sleeps == []
+    assert error.value.metadata["inference"]["api_requests"] == 1
+    assert error.value.metadata["vlm"]["attempts"][0]["retry_after_seconds"] == 120
 
 
 def test_run_preserves_breeding_parity_records_costs_and_offline_viewer(tmp_path, sdk):

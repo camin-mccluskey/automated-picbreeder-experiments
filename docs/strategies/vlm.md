@@ -58,7 +58,7 @@ VLMSelectionStrategy(
     temperature=0.0,
     max_completion_tokens=1024,
     timeout=120.0,
-    max_retries=2,
+    max_retries=5,
     env_file=None,
     client=None,
 )
@@ -100,11 +100,39 @@ JSON and invalid choices fail without selecting anything or substituting a
 random choice. A response is accepted only with `finish_reason=stop`.
 
 Transient transport errors and HTTP 408, 429, 500, 502, 503 and 504 retry the same
-request up to `max_retries` times, with delays of 1, 2, 4 and then at most 8
-seconds. SDK automatic retries are disabled so every attempt is counted.
+request up to `max_retries` times (five retries, six attempts by default).
+The adapter owns retry timing; SDK automatic retries are explicitly disabled,
+including for injected clients, so every attempt is counted once. The locked
+SDK's default chat retry policy covers 5xx responses, not 429.
+
+Timing is automatic, with no additional user configuration:
+
+- Request starts are separated by at least three seconds plus uniform jitter
+  of 0–1 seconds. This applies across decisions and retries on one strategy
+  instance. Request processing and local rendering count toward that interval;
+  the first request can start immediately.
+- Retry backoff uses equal jitter: a uniform wait between half and all of an
+  exponentially growing ceiling (2, 4, 8, 16, 32, then 60 seconds).
+- A valid `Retry-After` (seconds or HTTP date) or `retry-after-ms` is a minimum
+  wait, plus 0–1 seconds of jitter. The millisecond header takes precedence.
+  Server-directed waits are never shortened by the 60-second backoff cap.
+  Missing, negative, malformed or nonfinite values fall back to backoff.
+- The next attempt waits for the longer of the pacing and retry deadlines.
+  After the last permitted attempt the adapter fails immediately without
+  sleeping again. A later call on the same instance still honors its cooldown.
+
+Timing jitter uses operating-system randomness, leaving both breeding and
+selection RNG states unchanged. Pacing is local to a strategy instance; fresh
+batch strategies and separate processes do not share an account-wide limiter.
+It limits request frequency, not token usage, and cannot guarantee avoidance of
+provider capacity limits or account quotas. Persistent 429s can still exhaust
+the bounded retry budget. `timeout` applies per attempt, not to the whole
+decision including waits; a server-directed wait may be longer than it.
+
 Authentication, payment, unsupported-parameter and invalid-output errors do not
 retry. OpenRouter may route between providers of the requested model; returned
-routing metadata is saved when available.
+routing metadata is saved when available. See OpenRouter's
+[error and Retry-After documentation](https://openrouter.ai/docs/api/reference/errors-and-debugging).
 
 ## Records and interpretation
 
@@ -112,11 +140,16 @@ Decisions record mode `vlm`, with null numeric evaluation and preference scores.
 `decision.metadata.vlm` contains the exact prompt/protocol/schema, model and
 generation settings, SDK version, ordered PNG hashes, selected index, reason,
 and SDK response for each attempt, including usage, finish reason and response
-ID. Candidate IDs and saved PNGs in the selection event map indices back to
+ID. Each attempt also records its preceding wait; failed attempts record the
+status/type, retry eligibility, parsed server wait and scheduled retry delay
+when another attempt is allowed. Only parsed numeric timing is retained from
+error headers; raw headers, error bodies and exception text are not saved.
+Candidate IDs and saved PNGs in the selection event map indices back to
 genomes. Credentials and base64 request bodies are not saved.
 
 `decision.metadata.inference` records API request attempts, images submitted,
-prompt/completion tokens, reported USD cost and elapsed time including retries.
+prompt/completion tokens, reported USD cost and elapsed time including retries
+and pacing waits.
 These appear in metrics JSON/CSV, the run summary and batch metric aggregates.
 Unknown usage or cost remains null, including when a retry has unreported usage;
 known responses still remain individually inspectable. `evaluated_images` is

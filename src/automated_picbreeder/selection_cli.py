@@ -171,7 +171,7 @@ def _vlm(parser):
     group.add_argument("--temperature", type=_finite_float(0, 2), help="Sampling temperature in [0, 2] (default: 0).")
     group.add_argument("--max-completion-tokens", type=_integer_at_least(1), help="Output token budget (default: 1024).")
     group.add_argument("--timeout", type=_finite_float(0, exclusive_minimum=True), help="Seconds per API attempt (default: 120).")
-    group.add_argument("--max-retries", type=_integer_at_least(0), help="Extra attempts for transient API errors (default: 2).")
+    group.add_argument("--max-retries", type=_integer_at_least(0), help="Extra attempts for transient API errors (default: 5).")
     group.add_argument("--env-file", type=Path, help="Credentials file (default: repository .env; environment takes precedence).")
     parser.set_defaults(build_strategy=lambda args: VLMSelectionStrategy(**_provided(
         args, "temperature", "max_completion_tokens", "timeout", "max_retries", "env_file",

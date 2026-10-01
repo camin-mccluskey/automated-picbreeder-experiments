@@ -102,7 +102,7 @@ class VLMSelectionStrategy:
 
     def __init__(self, *, model=None, prompt="choose the most interesting image to you",
                  temperature=0.0, max_completion_tokens=1024, timeout=120.0,
-                 max_retries=2, env_file=None, client=None):
+                 max_retries=5, env_file=None, client=None):
         from .vlm import OpenRouterSelection
 
         self._selector = OpenRouterSelection(

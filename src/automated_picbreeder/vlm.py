@@ -7,6 +7,8 @@ image scores belong here, and credentials never enter configuration or records.
 import base64
 from contextlib import nullcontext
 from copy import deepcopy
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from hashlib import sha256
 from importlib.metadata import version
 import json
@@ -14,6 +16,7 @@ import math
 from numbers import Real
 import os
 from pathlib import Path
+from random import SystemRandom
 import time
 
 from .cppn import png_bytes
@@ -38,6 +41,37 @@ RESPONSE_FORMAT = {
         },
     },
 }
+
+# Transport timing must not advance either the selection or breeding RNG.
+_TIMING_RANDOM = SystemRandom()
+_BACKOFF_INITIAL = 2.0
+_BACKOFF_MAX = 60.0
+_MIN_REQUEST_INTERVAL = 3.0
+_REQUEST_JITTER = 1.0
+
+
+def _retry_after_seconds(exc):
+    """Read only retry timing from SDK errors; never retain raw headers."""
+    headers = getattr(exc, "headers", {})
+    for name, scale in (("retry-after-ms", .001), ("retry-after", 1.0)):
+        value = headers.get(name)
+        if value is None:
+            continue
+        try:
+            seconds = float(value) * scale
+        except (TypeError, ValueError, OverflowError):
+            if name != "retry-after":
+                continue
+            try:
+                date = parsedate_to_datetime(value)
+                if date.tzinfo is None:
+                    date = date.replace(tzinfo=timezone.utc)
+                seconds = max(0.0, date.timestamp() - time.time())
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if math.isfinite(seconds) and seconds >= 0:
+            return seconds
+    return None
 
 
 def _parse_choice(response):
@@ -87,6 +121,7 @@ class OpenRouterSelection:
         self.model, self.prompt = model, prompt
         self.temperature, self.timeout = float(temperature), float(timeout)
         self.max_completion_tokens, self.max_retries = max_completion_tokens, max_retries
+        self._next_request_at = 0.0
         self.client = client
         self._api_key = None
         if client is None:
@@ -107,6 +142,13 @@ class OpenRouterSelection:
             "model": self.model, "prompt": self.prompt, "protocol": PROTOCOL,
             "temperature": self.temperature, "max_completion_tokens": self.max_completion_tokens,
             "timeout": self.timeout, "max_retries": self.max_retries,
+            "retry_policy": {
+                "owner": "adapter", "backoff_initial_seconds": _BACKOFF_INITIAL,
+                "backoff_max_seconds": _BACKOFF_MAX, "backoff_jitter": "equal",
+                "respect_retry_after": True, "pacing_scope": "strategy_instance",
+                "min_request_interval_seconds": _MIN_REQUEST_INTERVAL,
+                "request_jitter_seconds": _REQUEST_JITTER,
+            },
             "response_format": deepcopy(RESPONSE_FORMAT),
             "provider": {"require_parameters": True},
             "presentation": "nine separate full-resolution PNGs, labelled Image 0 through Image 8",
@@ -142,8 +184,13 @@ class OpenRouterSelection:
         context = nullcontext(self.client) if self.client is not None else OpenRouter(api_key=self._api_key)
         with context as client:
             for attempt in range(self.max_retries + 1):
+                wait_seconds = max(0.0, self._next_request_at - time.monotonic())
+                if wait_seconds:
+                    time.sleep(wait_seconds)
+                self._next_request_at = (time.monotonic() + _MIN_REQUEST_INTERVAL
+                                         + _TIMING_RANDOM.uniform(0, _REQUEST_JITTER))
                 attempt_start = time.perf_counter()
-                record = {"attempt": attempt + 1}
+                record = {"attempt": attempt + 1, "wait_seconds": wait_seconds}
                 audit["attempts"].append(record)
                 try:
                     result = client.chat.send(**request)
@@ -156,8 +203,17 @@ class OpenRouterSelection:
                     record.update(error_type=type(exc).__name__, status_code=status,
                                   seconds=time.perf_counter() - attempt_start)
                     transient = isinstance(exc, httpx.TransportError) or status in (408, 429, 500, 502, 503, 504)
+                    retry_after = _retry_after_seconds(exc)
+                    record.update(retryable=transient, retry_after_seconds=retry_after)
+                    if transient:
+                        ceiling = min(_BACKOFF_MAX, _BACKOFF_INITIAL * 2 ** min(attempt, 5))
+                        delay = _TIMING_RANDOM.uniform(ceiling / 2, ceiling)
+                        if retry_after is not None:
+                            # Never cap the server's minimum or jitter below it.
+                            delay = max(delay, retry_after + _TIMING_RANDOM.uniform(0, _REQUEST_JITTER))
+                        self._next_request_at = max(self._next_request_at, time.monotonic() + delay)
                     if transient and attempt < self.max_retries:
-                        time.sleep(2 ** min(attempt, 3))
+                        record["retry_delay_seconds"] = max(0.0, self._next_request_at - time.monotonic())
                         continue
                     metadata = self._metadata(audit, started)
                     raise SelectionError(
